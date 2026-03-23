@@ -78,7 +78,23 @@ RISK_LEVELS = {
 # Local HuggingFace Reasoner Configuration
 # ============================================================================
 
-HF_MODEL_PATH = os.getenv("HF_MODEL_PATH", "../../models/roberta-base")
+# Standard project model location(s)
+_DEFAULT_HF_MODEL_PATHS = [
+    os.getenv("HF_MODEL_PATH"),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models", "roberta-base")),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "roberta-base")),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend", "models", "roberta-base")),
+]
+
+def _find_hf_model_path():
+    for candidate in _DEFAULT_HF_MODEL_PATHS:
+        if not candidate:
+            continue
+        if os.path.exists(candidate):
+            return candidate
+    return _DEFAULT_HF_MODEL_PATHS[1]  # fallback path for clear error message
+
+HF_MODEL_PATH = _find_hf_model_path()
 """Path to the local fine-tuned question-answering model directory."""
 
 HF_LABELS = ["LOW", "MEDIUM", "HIGH", "UNKNOWN"]

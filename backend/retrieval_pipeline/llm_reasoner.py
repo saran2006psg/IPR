@@ -74,8 +74,15 @@ def _load_llm() -> Tuple[AutoTokenizer, AutoModelForQuestionAnswering, torch.dev
         return _tokenizer, _model, _device
 
     model_path = HF_MODEL_PATH
+
     if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Local model path not found: {model_path}.")
+        raise FileNotFoundError(
+            f"Local model path not found: {model_path}.\n"
+            "Please set HF_MODEL_PATH to the correct location. Available candidates:\n"
+            f"  - {os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'roberta-base'))}\n"
+            f"  - {os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'roberta-base'))}\n"
+            f"  - current HF_MODEL_PATH environment value: {os.getenv('HF_MODEL_PATH', '<not set>')}"
+        )
 
     logger.info("Loading local QA risk reasoning model from %s", model_path)
 
@@ -233,3 +240,91 @@ def analyze_clauses_with_llm_batch(
         analyze_clause_with_llm(c, r)
         for c, r in zip(contract_clauses, query_results_list)
     ]
+
+
+def summarize_contract_analysis(analyses: List[Dict[str, Any]]) -> str:
+    """
+    Generate a comprehensive summary of the contract analysis results.
+    
+    This function takes the individual clause analyses and creates an overall
+    summary of the document's risk profile, key findings, and recommendations.
+    
+    Args:
+        analyses: List of clause analysis results from analyze_clauses_with_llm_batch
+        
+    Returns:
+        A human-readable summary string
+    """
+    if not analyses:
+        return "No clauses were analyzed. Unable to generate summary."
+    
+    # Count risk levels
+    risk_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
+    high_risk_clauses = []
+    medium_risk_clauses = []
+    
+    for analysis in analyses:
+        risk_level = analysis.get("risk_level", "UNKNOWN")
+        risk_counts[risk_level] = risk_counts.get(risk_level, 0) + 1
+        
+        if risk_level == "HIGH":
+            high_risk_clauses.append(analysis.get("clause_text", "")[:100] + "...")
+        elif risk_level == "MEDIUM":
+            medium_risk_clauses.append(analysis.get("clause_text", "")[:100] + "...")
+    
+    total_clauses = len(analyses)
+    
+    # Build summary
+    summary_parts = []
+    summary_parts.append(f"## Contract Analysis Summary\n")
+    summary_parts.append(f"**Total Clauses Analyzed:** {total_clauses}\n")
+    summary_parts.append(f"**Risk Distribution:**")
+    summary_parts.append(f"- High Risk: {risk_counts['HIGH']} ({risk_counts['HIGH']/total_clauses*100:.1f}%)")
+    summary_parts.append(f"- Medium Risk: {risk_counts['MEDIUM']} ({risk_counts['MEDIUM']/total_clauses*100:.1f}%)")
+    summary_parts.append(f"- Low Risk: {risk_counts['LOW']} ({risk_counts['LOW']/total_clauses*100:.1f}%)")
+    summary_parts.append(f"- Unknown: {risk_counts['UNKNOWN']} ({risk_counts['UNKNOWN']/total_clauses*100:.1f}%)\n")
+    
+    # Overall assessment
+    if risk_counts['HIGH'] > total_clauses * 0.2:  # More than 20% high risk
+        overall_risk = "HIGH"
+        assessment = "This contract contains significant risk factors that require careful review."
+    elif risk_counts['HIGH'] + risk_counts['MEDIUM'] > total_clauses * 0.3:  # More than 30% medium/high
+        overall_risk = "MEDIUM"
+        assessment = "This contract has moderate risk factors that should be evaluated."
+    else:
+        overall_risk = "LOW"
+        assessment = "This contract appears to have standard risk levels."
+    
+    summary_parts.append(f"**Overall Risk Assessment:** {overall_risk}")
+    summary_parts.append(f"{assessment}\n")
+    
+    # Key findings
+    summary_parts.append("**Key Findings:**")
+    if high_risk_clauses:
+        summary_parts.append(f"- **Critical Issues:** {len(high_risk_clauses)} high-risk clauses identified")
+        for i, clause in enumerate(high_risk_clauses[:3]):  # Show up to 3 examples
+            summary_parts.append(f"  {i+1}. {clause}")
+        if len(high_risk_clauses) > 3:
+            summary_parts.append(f"  ... and {len(high_risk_clauses) - 3} more")
+    
+    if medium_risk_clauses:
+        summary_parts.append(f"- **Notable Concerns:** {len(medium_risk_clauses)} medium-risk clauses identified")
+    
+    # Recommendations
+    summary_parts.append("\n**Recommendations:**")
+    if overall_risk == "HIGH":
+        summary_parts.append("- Seek legal counsel for review of high-risk clauses")
+        summary_parts.append("- Consider renegotiating problematic terms")
+        summary_parts.append("- Document all concerns and mitigation strategies")
+    elif overall_risk == "MEDIUM":
+        summary_parts.append("- Review medium-risk clauses with legal team")
+        summary_parts.append("- Ensure proper monitoring and compliance mechanisms")
+        summary_parts.append("- Consider adding protective language where possible")
+    else:
+        summary_parts.append("- Contract appears acceptable with standard review")
+        summary_parts.append("- Monitor for any changes in business circumstances")
+    
+    summary_parts.append("- Maintain clear communication with all parties")
+    summary_parts.append("- Keep detailed records of all contract-related activities")
+    
+    return "\n".join(summary_parts)

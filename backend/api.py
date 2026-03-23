@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from retrieval_pipeline import analyze_contract
 from retrieval_pipeline.pdf_extractor import validate_pdf
 from retrieval_pipeline.config import setup_logging
+from retrieval_pipeline.llm_reasoner import summarize_contract_analysis
 
 # Configure logging
 setup_logging()
@@ -33,7 +34,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=["*"] if os.getenv("ALLOW_ALL_ORIGINS", "true").lower() in ["1", "true", "yes"] else ["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,6 +61,11 @@ class ClauseResult(BaseModel):
 class AnalysisResponse(BaseModel):
     """Complete contract analysis response."""
     results: List[ClauseResult]
+
+
+class SummaryResponse(BaseModel):
+    """Contract summary response."""
+    summary: str
 
 
 # Health check endpoint
@@ -186,6 +192,109 @@ async def analyze_contract_endpoint(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=500,
             detail=f"Contract analysis failed: {str(e)}"
+        )
+        
+    finally:
+        # Clean up temporary file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+                logger.info(f"Cleaned up temporary file: {temp_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete temporary file: {e}")
+
+
+# Summary endpoint
+@app.post("/summarize", response_model=SummaryResponse)
+async def summarize_contract_endpoint(file: UploadFile = File(...)):
+    """
+    Generate a summary of contract analysis results.
+    
+    This endpoint:
+    1. Validates the uploaded file is a PDF
+    2. Saves it to a temporary location
+    3. Runs the analysis pipeline
+    4. Generates a comprehensive summary
+    5. Cleans up the temporary file
+    
+    Args:
+        file: Uploaded PDF file (multipart/form-data with field name "file")
+        
+    Returns:
+        JSON response with contract summary:
+        {
+            "summary": "Comprehensive summary text..."
+        }
+        
+    Raises:
+        HTTPException 400: If file is not a PDF or is invalid
+        HTTPException 500: If analysis or summarization fails
+        
+    Example:
+        curl -X POST http://localhost:8000/summarize \\
+             -F "file=@contract.pdf"
+    """
+    logger.info(f"Received upload for summarization: {file.filename}")
+    
+    # Validate file type
+    if not file.filename.lower().endswith('.pdf'):
+        logger.warning(f"Invalid file type: {file.filename}")
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are accepted. Please upload a .pdf file."
+        )
+    
+    # Create a temporary file to store the upload
+    temp_file = None
+    temp_path = None
+    
+    try:
+        # Create temporary file
+        temp_file = tempfile.NamedTemporaryFile(
+            suffix='.pdf',
+            delete=False
+        )
+        temp_path = temp_file.name
+        
+        # Write uploaded file to temp location
+        content = await file.read()
+        temp_file.write(content)
+        temp_file.close()
+        
+        logger.info(f"Saved upload to temporary file: {temp_path}")
+        
+        # Validate PDF structure
+        try:
+            validate_pdf(temp_path)
+        except ValueError as e:
+            logger.warning(f"PDF validation failed: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid PDF file: {str(e)}"
+            )
+        
+        # Run analysis pipeline
+        logger.info("Starting contract analysis pipeline for summarization...")
+        analyses = analyze_contract(temp_path, verbose=False)
+        logger.info(f"Analysis complete: {len(analyses)} clauses analyzed")
+        
+        # Generate summary
+        logger.info("Generating contract summary...")
+        summary = summarize_contract_analysis(analyses)
+        logger.info("Summary generation complete")
+        
+        return SummaryResponse(summary=summary)
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (validation errors)
+        raise
+        
+    except Exception as e:
+        # Log and return 500 for pipeline errors
+        logger.error(f"Summarization pipeline failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Contract summarization failed: {str(e)}"
         )
         
     finally:

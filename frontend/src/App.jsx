@@ -43,11 +43,202 @@ function ErrorBanner({ message, onDismiss }) {
   );
 }
 
+function SummaryDisplay({ summary }) {
+  const lines = summary.split('\n');
+  const sections = [];
+  let currentSection = null;
+
+  lines.forEach((line, index) => {
+    if (line.startsWith('## ')) {
+      // Main title
+      sections.push({
+        type: 'title',
+        content: line.replace('## ', ''),
+        key: `title-${index}`
+      });
+    } else if (line.startsWith('**') && line.endsWith(':**')) {
+      // Section header
+      currentSection = line.replace(/\*\*/g, '').replace(':', '');
+      sections.push({
+        type: 'section',
+        content: currentSection,
+        key: `section-${index}`
+      });
+    } else if (line.startsWith('- ')) {
+      // List item
+      const content = line.substring(2);
+      if (content.includes(':')) {
+        // Risk distribution item
+        const [label, value] = content.split(': ');
+        sections.push({
+          type: 'risk-item',
+          label,
+          value,
+          key: `risk-${index}`
+        });
+      } else if (content.startsWith('**')) {
+        // Bold list item
+        sections.push({
+          type: 'bold-item',
+          content: content.replace(/\*\*/g, ''),
+          key: `bold-${index}`
+        });
+      } else {
+        // Regular list item
+        sections.push({
+          type: 'list-item',
+          content,
+          key: `list-${index}`
+        });
+      }
+    } else if (line.startsWith('  ')) {
+      // Indented content (like numbered lists)
+      const content = line.trim();
+      if (/^\d+\./.test(content)) {
+        // Numbered item
+        sections.push({
+          type: 'numbered-item',
+          content: content.replace(/^\d+\.\s*/, ''),
+          key: `numbered-${index}`
+        });
+      } else {
+        // Regular indented text
+        sections.push({
+          type: 'indented',
+          content,
+          key: `indented-${index}`
+        });
+      }
+    } else if (line.trim() && !line.startsWith('**')) {
+      // Regular paragraph text
+      sections.push({
+        type: 'paragraph',
+        content: line.trim(),
+        key: `para-${index}`
+      });
+    }
+  });
+
+  return (
+    <div>
+      {sections.map(section => {
+        switch (section.type) {
+          case 'title':
+            return (
+              <h3 key={section.key} style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: '#4f72ff',
+                marginBottom: 16,
+                borderBottom: '1px solid rgba(79,114,255,0.2)',
+                paddingBottom: 8
+              }}>
+                {section.content}
+              </h3>
+            );
+          case 'section':
+            return (
+              <h4 key={section.key} style={{
+                fontSize: 16,
+                fontWeight: 600,
+                color: '#e8ecf4',
+                marginTop: 20,
+                marginBottom: 12
+              }}>
+                {section.content}
+              </h4>
+            );
+          case 'risk-item':
+            const isHigh = section.label.includes('High Risk');
+            const isMedium = section.label.includes('Medium Risk');
+            const isLow = section.label.includes('Low Risk');
+            const color = isHigh ? '#ef4444' : isMedium ? '#f59e0b' : isLow ? '#22c55e' : '#64748b';
+            return (
+              <div key={section.key} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '8px 12px',
+                marginBottom: 4,
+                background: 'rgba(255,255,255,0.02)',
+                borderRadius: 6,
+                border: `1px solid ${color}20`
+              }}>
+                <span style={{ color, fontWeight: 500 }}>{section.label}</span>
+                <span style={{ color: '#94a3b8', fontSize: 14 }}>{section.value}</span>
+              </div>
+            );
+          case 'bold-item':
+            return (
+              <div key={section.key} style={{
+                fontWeight: 600,
+                color: '#e8ecf4',
+                marginBottom: 8,
+                paddingLeft: 16
+              }}>
+                • {section.content}
+              </div>
+            );
+          case 'list-item':
+            return (
+              <div key={section.key} style={{
+                color: '#cbd5e1',
+                marginBottom: 6,
+                paddingLeft: 16,
+                lineHeight: 1.5
+              }}>
+                • {section.content}
+              </div>
+            );
+          case 'numbered-item':
+            return (
+              <div key={section.key} style={{
+                color: '#cbd5e1',
+                marginBottom: 4,
+                paddingLeft: 32,
+                fontSize: 14,
+                lineHeight: 1.4
+              }}>
+                {section.content}
+              </div>
+            );
+          case 'indented':
+            return (
+              <div key={section.key} style={{
+                color: '#94a3b8',
+                marginBottom: 2,
+                paddingLeft: 48,
+                fontSize: 13,
+                fontStyle: 'italic'
+              }}>
+                {section.content}
+              </div>
+            );
+          case 'paragraph':
+            return (
+              <p key={section.key} style={{
+                color: '#cbd5e1',
+                marginBottom: 12,
+                lineHeight: 1.6
+              }}>
+                {section.content}
+              </p>
+            );
+          default:
+            return null;
+        }
+      })}
+    </div>
+  );
+}
+
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [loading, setLoading]           = useState(false);
   const [results, setResults]           = useState(null);
   const [error, setError]               = useState(null);
+  const [summary, setSummary]           = useState(null);
+  const [summarizing, setSummarizing]   = useState(false);
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
@@ -61,6 +252,7 @@ function App() {
     setLoading(true);
     setError(null);
     setResults(null);
+    setSummary(null); // Reset summary when re-analyzing
 
     try {
       const formData = new FormData();
@@ -90,9 +282,44 @@ function App() {
     }
   };
 
+  const handleSummarize = async () => {
+    if (!selectedFile) return;
+
+    setSummarizing(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      const response = await fetch('http://localhost:8000/summarize', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(
+          errorData.detail || `Server error: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const data = await response.json();
+      setSummary(data.summary);
+    } catch (err) {
+      console.error('Summarization failed:', err);
+      setError(
+        err.message || 'Failed to generate summary. Please check if the backend server is running.'
+      );
+    } finally {
+      setSummarizing(false);
+    }
+  };
+
   const handleReset = () => {
     setSelectedFile(null);
     setResults(null);
+    setSummary(null);
     setError(null);
   };
 
@@ -133,6 +360,66 @@ function App() {
           {results && !loading && (
             <>
               <ResultsList results={results} />
+
+              {/* Summary Section */}
+              <div style={{ marginTop: 32 }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 20,
+                }}>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, color: '#e8ecf4' }}>
+                    Document Summary
+                  </h2>
+                  {!summary && !summarizing && (
+                    <button
+                      className="btn-primary"
+                      onClick={handleSummarize}
+                      disabled={summarizing}
+                      style={{ fontSize: 14, padding: '8px 16px' }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ marginRight: 8 }}>
+                        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      Generate Summary
+                    </button>
+                  )}
+                </div>
+
+                {/* Summarizing indicator */}
+                {summarizing && (
+                  <div style={{
+                    textAlign: 'center',
+                    padding: '40px 0',
+                    color: '#64748b',
+                  }}>
+                    <div style={{
+                      width: 24,
+                      height: 24,
+                      border: '2px solid #4f72ff',
+                      borderTop: '2px solid transparent',
+                      borderRadius: '50%',
+                      animation: 'spin 1s linear infinite',
+                      margin: '0 auto 16px',
+                    }} />
+                    Generating summary...
+                  </div>
+                )}
+
+                {/* Summary content */}
+                {summary && !summarizing && (
+                  <div style={{
+                    background: 'rgba(17,24,39,0.6)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 12,
+                    padding: '24px',
+                    color: '#e8ecf4',
+                  }}>
+                    <SummaryDisplay summary={summary} />
+                  </div>
+                )}
+              </div>
 
               {/* Reset button */}
               <div style={{ textAlign: 'center', marginTop: 28 }}>
