@@ -32,7 +32,7 @@ cd d:\roberta-base
 ### 2. Run Setup Script
 
 ```bash
-python setup.py
+python scripts/setup.py
 ```
 
 This will:
@@ -54,7 +54,7 @@ PINECONE_API_KEY=pcsk_xxxxxxxxxxxxxxxxxxxxx
 ### 4. Run Ingestion Pipeline (First Time Only)
 
 ```bash
-python ingest_pipeline.py
+python backend/scripts/ingest_pipeline.py
 ```
 
 This loads 9,447 legal clauses into Pinecone (~5 minutes).
@@ -63,11 +63,29 @@ This loads 9,447 legal clauses into Pinecone (~5 minutes).
 
 ```bash
 # Create a sample contract
-python create_sample_contract.py
+python backend/scripts/create_sample_contract.py
 
 # Analyze the contract
-python -m retrieval_pipeline.main sample_employment_contract.pdf
+python -m backend.retrieval_pipeline.main sample_employment_contract.pdf
 ```
+
+### 6. Run the Backend API
+
+```bash
+python backend/api.py
+```
+
+The API will be available at http://localhost:8000 with documentation at http://localhost:8000/docs
+
+### 7. Run the Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend will be available at http://localhost:5173
 
 ---
 

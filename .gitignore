@@ -48,6 +48,16 @@ env/
 # PyTorch Models (large files)
 *.bin
 *.pth
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
 *.ckpt
 roberta-base/pytorch_model.bin
 
