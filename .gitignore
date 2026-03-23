@@ -1,0 +1,100 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+.venv-1/
+venv/
+ENV/
+env/
+.virtualenv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment Variables (Keep template, ignore actual keys)
+.env
+!.env.example
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# PyTorch Models (large files)
+*.bin
+*.pth
+*.ckpt
+roberta-base/pytorch_model.bin
+
+# Model Cache
+.cache/
+models/
+
+# Test Files
+sample_*.pdf
+test_*.pdf
+*.test.pdf
+
+# Logs
+*.log
+logs/
+
+# Data Files (large)
+*.csv.gz
+*.parquet
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Pinecone Index Backup
+pinecone_backup/
+
+# Temp Files
+temp/
+tmp/
+*.tmp
+
+# Output Files
+output/
+results/
+reports/
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Compiled files
+*.pyc
+*.pyo

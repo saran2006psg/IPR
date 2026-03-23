@@ -1,0 +1,68 @@
+# Legal Contract Risk Analyzer - Complete System Requirements
+# Install with: pip install -r requirements.txt
+# Python 3.8+
+
+# ============================================================================
+# Core Dependencies
+# ============================================================================
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning & Embeddings
+sentence-transformers>=2.2.0
+torch>=2.0.0
+transformers>=4.30.0
+
+# Vector Database
+pinecone>=5.0.0
+
+# ============================================================================
+# Pipeline-Specific Dependencies
+# ============================================================================
+
+# PDF Processing (Retrieval Pipeline)
+PyMuPDF>=1.23.0
+
+# PDF Generation (Testing & Samples)
+reportlab>=3.6.0
+
+# ============================================================================
+# Utilities
+# ============================================================================
+
+# Environment Management
+python-dotenv>=1.0.0
+
+# Progress Bars
+tqdm>=4.65.0
+
+# ============================================================================
+# Optional Dependencies (Uncomment if needed)
+# ============================================================================
+
+# # Jupyter Notebook Support
+# jupyter>=1.0.0
+# ipywidgets>=8.0.0
+
+# # Data Visualization
+# matplotlib>=3.5.0
+
+# ============================================================================
+# Web API Dependencies
+# ============================================================================
+
+# FastAPI & ASGI Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6  # For file upload support
+# seaborn>=0.12.0
+
+# # Export to Excel
+# openpyxl>=3.0.0
+
+# # Web Interface (Future)
+# fastapi>=0.100.0
+# uvicorn>=0.23.0
+# streamlit>=1.25.0
