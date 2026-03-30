@@ -9,27 +9,26 @@ Pipeline:
 """
 
 import logging
-import os
-from typing import Any, Dict, List, Optional, Tuple
-
-import torch
-from transformers import AutoModelForQuestionAnswering, AutoTokenizer
+import json
+import re
+import time
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Optional
 
 from .config import (
-    HF_BATCH_SIZE,
-    HF_MAX_LENGTH,
-    HF_MODEL_PATH,
+    MODEL_SERVER_BATCH_SIZE,
+    MODEL_SERVER_ENABLED,
+    MODEL_SERVER_MAX_RETRIES,
+    MODEL_SERVER_RETRY_BACKOFF_SEC,
+    MODEL_SERVER_TIMEOUT_SEC,
+    MODEL_SERVER_URL,
+    QA_BATCH_MODE_ENABLED,
     REASONER_SIMILARITY_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Singleton model cache
-# ---------------------------------------------------------------------------
-_tokenizer = None
-_model = None
-_device = None
+_model_service_unavailable = False
 
 # ---------------------------------------------------------------------------
 # Risk-indicator questions per level
@@ -60,41 +59,6 @@ QUESTION_LABELS: Dict[str, str] = {
     "What is the Governing Law?": "governing law",
     "What are the Insurance requirements?": "insurance requirements",
 }
-
-
-# ---------------------------------------------------------------------------
-# Model loading
-# ---------------------------------------------------------------------------
-
-def _load_llm() -> Tuple[AutoTokenizer, AutoModelForQuestionAnswering, torch.device]:
-    """Load tokenizer/model once and cache them for reuse."""
-    global _tokenizer, _model, _device
-
-    if _tokenizer is not None and _model is not None and _device is not None:
-        return _tokenizer, _model, _device
-
-    model_path = HF_MODEL_PATH
-
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(
-            f"Local model path not found: {model_path}.\n"
-            "Please set HF_MODEL_PATH to the correct location. Available candidates:\n"
-            f"  - {os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'roberta-base'))}\n"
-            f"  - {os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'roberta-base'))}\n"
-            f"  - current HF_MODEL_PATH environment value: {os.getenv('HF_MODEL_PATH', '<not set>')}"
-        )
-
-    logger.info("Loading local QA risk reasoning model from %s", model_path)
-
-    _tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True, use_fast=False)
-    _model = AutoModelForQuestionAnswering.from_pretrained(model_path, local_files_only=True)
-
-    _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _model.to(_device)
-    _model.eval()
-
-    logger.info("Loaded local QA model on %s", _device)
-    return _tokenizer, _model, _device
 
 
 # ---------------------------------------------------------------------------
@@ -146,34 +110,107 @@ def _filter_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # QA inference
 # ---------------------------------------------------------------------------
 
-def _find_answer(question: str, context: str) -> Optional[Dict[str, Any]]:
-    """Run one QA inference. Returns None when the model gives no confident answer."""
-    tokenizer, model, device = _load_llm()
-    inputs = tokenizer(
-        question,
-        context,
-        return_tensors="pt",
-        max_length=HF_MAX_LENGTH,
-        truncation="only_second",
-        padding="max_length",
-    )
-    inputs = {k: v.to(device) for k, v in inputs.items()}
+def _query_model_server(question: str, context: str) -> Optional[Dict[str, Any]]:
+    """Call external QA model server and return answer payload."""
+    global _model_service_unavailable
 
-    with torch.no_grad():
-        outputs = model(**inputs)
-
-    start = torch.argmax(outputs.start_logits).item()
-    end = torch.argmax(outputs.end_logits).item() + 1
-    if end <= start:
-        end = start + 1
-
-    answer = tokenizer.decode(inputs["input_ids"][0][start:end], skip_special_tokens=True)
-    score = (outputs.start_logits[0, start] + outputs.end_logits[0, end - 1]).item()
-
-    if len(answer.strip()) < 2 or score < -5.0:
+    if not MODEL_SERVER_ENABLED:
+        _model_service_unavailable = True
         return None
 
-    return {"answer": answer.strip(), "confidence": round(score, 2)}
+    payload = json.dumps({"question": question, "context": context}).encode("utf-8")
+    request = urllib.request.Request(
+        MODEL_SERVER_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    for attempt in range(MODEL_SERVER_MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=MODEL_SERVER_TIMEOUT_SEC) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+
+            _model_service_unavailable = False
+
+            answer = str(response_data.get("answer", "")).strip()
+            confidence = float(response_data.get("confidence", -999.0))
+
+            if len(answer) < 2 or confidence < -5.0:
+                return None
+            return {"answer": answer, "confidence": round(confidence, 2)}
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
+            if attempt == MODEL_SERVER_MAX_RETRIES:
+                _model_service_unavailable = True
+                logger.warning("Model service call failed after retries: %s", exc)
+                return None
+            sleep_time = MODEL_SERVER_RETRY_BACKOFF_SEC * (2 ** attempt)
+            time.sleep(sleep_time)
+    return None
+
+
+def _query_model_server_batch(pairs: List[Dict[str, str]]) -> List[Optional[Dict[str, Any]]]:
+    """Call external QA batch endpoint and return aligned answer payloads."""
+    global _model_service_unavailable
+
+    if not MODEL_SERVER_ENABLED:
+        _model_service_unavailable = True
+        return [None for _ in pairs]
+
+    if not pairs:
+        return []
+
+    batch_url = MODEL_SERVER_URL.rsplit("/", 1)[0] + "/qa_batch"
+    results: List[Optional[Dict[str, Any]]] = []
+    request_batch_size = max(1, MODEL_SERVER_BATCH_SIZE)
+
+    for start in range(0, len(pairs), request_batch_size):
+        chunk = pairs[start:start + request_batch_size]
+        payload = json.dumps({"requests": chunk}).encode("utf-8")
+        request = urllib.request.Request(
+            batch_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        chunk_result: Optional[List[Optional[Dict[str, Any]]]] = None
+        for attempt in range(MODEL_SERVER_MAX_RETRIES + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=MODEL_SERVER_TIMEOUT_SEC) as response:
+                    response_data = json.loads(response.read().decode("utf-8"))
+
+                responses = response_data.get("responses", [])
+                parsed: List[Optional[Dict[str, Any]]] = []
+                for item in responses:
+                    answer = str(item.get("answer", "")).strip()
+                    confidence = float(item.get("confidence", -999.0))
+                    if len(answer) < 2 or confidence < -5.0:
+                        parsed.append(None)
+                    else:
+                        parsed.append({"answer": answer, "confidence": round(confidence, 2)})
+
+                while len(parsed) < len(chunk):
+                    parsed.append(None)
+                chunk_result = parsed[:len(chunk)]
+                _model_service_unavailable = False
+                break
+            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
+                if attempt == MODEL_SERVER_MAX_RETRIES:
+                    logger.warning("Model service batch call failed after retries: %s", exc)
+                    _model_service_unavailable = True
+                    chunk_result = [None for _ in chunk]
+                else:
+                    sleep_time = MODEL_SERVER_RETRY_BACKOFF_SEC * (2 ** attempt)
+                    time.sleep(sleep_time)
+
+        results.extend(chunk_result or [None for _ in chunk])
+
+    return results
+
+def _find_answer(question: str, context: str) -> Optional[Dict[str, Any]]:
+    """Run one QA inference against the external model service."""
+    return _query_model_server(question, context)
 
 
 # ---------------------------------------------------------------------------
@@ -216,10 +253,16 @@ def analyze_clause_with_llm(clause_text: str, retrieved_clauses: Any) -> Dict[st
         sev = top["severity"]
         risk_level = sev if sev in ("HIGH", "MEDIUM", "LOW") else "LOW"
         pct = round(top["score"] * 100, 1)
-        explanation = (
-            f"This clause is {pct}% similar to a known {risk_level} risk "
-            f"\"{top['clause_type']}\" clause in the knowledge base."
-        )
+        if _model_service_unavailable:
+            explanation = (
+                f"Model service unavailable; fallback applied. This clause is {pct}% similar "
+                f"to a known {risk_level} risk \"{top['clause_type']}\" clause in the knowledge base."
+            )
+        else:
+            explanation = (
+                f"This clause is {pct}% similar to a known {risk_level} risk "
+                f"\"{top['clause_type']}\" clause in the knowledge base."
+            )
     else:
         risk_level = "LOW"
         explanation = "No risk patterns detected. This clause appears to be standard boilerplate."
@@ -235,11 +278,109 @@ def analyze_clause_with_llm(clause_text: str, retrieved_clauses: Any) -> Dict[st
 def analyze_clauses_with_llm_batch(
     contract_clauses: List[str], query_results_list: List[Any]
 ) -> List[Dict[str, Any]]:
-    """Analyze a batch of clauses sequentially."""
-    return [
-        analyze_clause_with_llm(c, r)
-        for c, r in zip(contract_clauses, query_results_list)
-    ]
+    """Analyze a batch of clauses and use QA batch mode when enabled."""
+    if not QA_BATCH_MODE_ENABLED:
+        return [
+            analyze_clause_with_llm(c, r)
+            for c, r in zip(contract_clauses, query_results_list)
+        ]
+
+    clause_data: List[Dict[str, Any]] = []
+    qa_pairs: List[Dict[str, str]] = []
+    qa_index_map: List[List[tuple[str, int]]] = []
+
+    for clause_text, retrieved in zip(contract_clauses, query_results_list):
+        all_matches = _extract_matches(retrieved)
+        similar_clauses = _filter_matches(all_matches)
+
+        indices_for_clause: List[tuple[str, int]] = []
+        for level in ["HIGH", "MEDIUM", "LOW"]:
+            for question in QUESTIONS[level]:
+                pair_index = len(qa_pairs)
+                qa_pairs.append({"question": question, "context": clause_text})
+                indices_for_clause.append((question, pair_index))
+
+        clause_data.append({
+            "clause_text": clause_text,
+            "similar_clauses": similar_clauses,
+        })
+        qa_index_map.append(indices_for_clause)
+
+    qa_results = _query_model_server_batch(qa_pairs)
+    analyses: List[Dict[str, Any]] = []
+
+    for idx, metadata in enumerate(clause_data):
+        clause_text = metadata["clause_text"]
+        similar_clauses = metadata["similar_clauses"]
+
+        highest_level_found: Optional[str] = None
+        found_indicators: List[str] = []
+
+        for question, result_index in qa_index_map[idx]:
+            res = qa_results[result_index] if result_index < len(qa_results) else None
+            if not res:
+                continue
+
+            label = QUESTION_LABELS.get(question, question)
+            found_indicators.append(label)
+
+            if highest_level_found is None:
+                if question in QUESTIONS["HIGH"]:
+                    highest_level_found = "HIGH"
+                elif question in QUESTIONS["MEDIUM"]:
+                    highest_level_found = "MEDIUM"
+                else:
+                    highest_level_found = "LOW"
+
+        if highest_level_found:
+            risk_level = highest_level_found
+            indicators_str = ", ".join(found_indicators[:3])
+            explanation = f"This clause contains: {indicators_str}."
+        elif similar_clauses:
+            top = similar_clauses[0]
+            sev = top["severity"]
+            risk_level = sev if sev in ("HIGH", "MEDIUM", "LOW") else "LOW"
+            pct = round(top["score"] * 100, 1)
+            if _model_service_unavailable:
+                explanation = (
+                    f"Model service unavailable; fallback applied. This clause is {pct}% similar "
+                    f"to a known {risk_level} risk \"{top['clause_type']}\" clause in the knowledge base."
+                )
+            else:
+                explanation = (
+                    f"This clause is {pct}% similar to a known {risk_level} risk "
+                    f"\"{top['clause_type']}\" clause in the knowledge base."
+                )
+        else:
+            risk_level = "LOW"
+            explanation = "No risk patterns detected. This clause appears to be standard boilerplate."
+
+        analyses.append(
+            {
+                "clause_text": clause_text,
+                "risk_level": risk_level,
+                "explanation": explanation,
+                "similar_clauses": similar_clauses,
+            }
+        )
+
+    return analyses
+
+def get_model_service_status() -> Dict[str, Any]:
+    """Return model-service connectivity and configuration status."""
+    health_url = MODEL_SERVER_URL.rsplit("/", 1)[0] + "/health"
+    if not MODEL_SERVER_ENABLED:
+        return {"enabled": False, "status": "disabled", "url": health_url}
+
+    request = urllib.request.Request(health_url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=min(2.0, MODEL_SERVER_TIMEOUT_SEC)) as response:
+            response_data = json.loads(response.read().decode("utf-8"))
+        status = str(response_data.get("status", "unknown"))
+        normalized = "ready" if status == "ok" else status
+        return {"enabled": True, "status": normalized, "url": health_url}
+    except Exception:
+        return {"enabled": True, "status": "offline", "url": health_url}
 
 
 def summarize_contract_analysis(analyses: List[Dict[str, Any]]) -> str:
@@ -258,6 +399,11 @@ def summarize_contract_analysis(analyses: List[Dict[str, Any]]) -> str:
     if not analyses:
         return "No clauses were analyzed. Unable to generate summary."
     
+    def _clause_preview(text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text or "").strip()
+        cleaned = re.sub(r"^\d+[.)\-:\s]+", "", cleaned)
+        return cleaned[:100] + ("..." if len(cleaned) > 100 else "")
+
     # Count risk levels
     risk_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
     high_risk_clauses = []
@@ -268,9 +414,9 @@ def summarize_contract_analysis(analyses: List[Dict[str, Any]]) -> str:
         risk_counts[risk_level] = risk_counts.get(risk_level, 0) + 1
         
         if risk_level == "HIGH":
-            high_risk_clauses.append(analysis.get("clause_text", "")[:100] + "...")
+            high_risk_clauses.append(_clause_preview(analysis.get("clause_text", "")))
         elif risk_level == "MEDIUM":
-            medium_risk_clauses.append(analysis.get("clause_text", "")[:100] + "...")
+            medium_risk_clauses.append(_clause_preview(analysis.get("clause_text", "")))
     
     total_clauses = len(analyses)
     

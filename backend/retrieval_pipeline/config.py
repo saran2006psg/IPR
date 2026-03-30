@@ -108,6 +108,32 @@ HF_BATCH_SIZE = 8
 
 
 # ============================================================================
+# External Model Service Configuration
+# ============================================================================
+
+MODEL_SERVER_ENABLED = os.getenv("MODEL_SERVER_ENABLED", "true").lower() in ["1", "true", "yes"]
+"""Whether to call an external QA model service for inference."""
+
+MODEL_SERVER_URL = os.getenv("MODEL_SERVER_URL", "http://localhost:9000/qa")
+"""External model service endpoint for QA inference."""
+
+MODEL_SERVER_TIMEOUT_SEC = float(os.getenv("MODEL_SERVER_TIMEOUT_SEC", "8"))
+"""Timeout in seconds for model service requests."""
+
+MODEL_SERVER_MAX_RETRIES = int(os.getenv("MODEL_SERVER_MAX_RETRIES", "2"))
+"""Maximum retries for model service requests on transient failures."""
+
+MODEL_SERVER_RETRY_BACKOFF_SEC = float(os.getenv("MODEL_SERVER_RETRY_BACKOFF_SEC", "0.4"))
+"""Base backoff in seconds between model service retries."""
+
+QA_BATCH_MODE_ENABLED = os.getenv("QA_BATCH_MODE_ENABLED", "true").lower() in ["1", "true", "yes"]
+"""Whether to use batched QA calls against the model server."""
+
+MODEL_SERVER_BATCH_SIZE = int(os.getenv("MODEL_SERVER_BATCH_SIZE", "24"))
+"""Number of QA pairs to send in each model-server batch request."""
+
+
+# ============================================================================
 # Logging Configuration
 # ============================================================================
 

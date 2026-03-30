@@ -8,6 +8,7 @@ analyze_contract() function, enabling web-based contract risk analysis.
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 from retrieval_pipeline import analyze_contract
 from retrieval_pipeline.pdf_extractor import validate_pdf
 from retrieval_pipeline.config import setup_logging
-from retrieval_pipeline.llm_reasoner import summarize_contract_analysis
+from retrieval_pipeline.llm_reasoner import get_model_service_status, summarize_contract_analysis
 
 # Configure logging
 setup_logging()
@@ -68,8 +69,17 @@ class SummaryResponse(BaseModel):
     summary: str
 
 
+class HealthResponse(BaseModel):
+    """Service health response including model-server status."""
+    status: str
+    api: str
+    model_server: str
+    model_server_url: str
+    timestamp: str
+
+
 # Health check endpoint
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 async def health_check():
     """
     Health check endpoint.
@@ -77,7 +87,17 @@ async def health_check():
     Returns:
         Status message indicating the API is operational
     """
-    return {"status": "ok"}
+    model_info = get_model_service_status()
+    model_status = model_info.get("status", "unknown")
+    overall = "ok" if model_status in ["ready", "disabled", "loading"] else "degraded"
+
+    return HealthResponse(
+        status=overall,
+        api="ready",
+        model_server=model_status,
+        model_server_url=str(model_info.get("url", "")),
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 # Main analysis endpoint

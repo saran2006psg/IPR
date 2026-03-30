@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Header from './components/Header';
 import FileUpload from './components/FileUpload';
 import LoadingIndicator from './components/LoadingIndicator';
@@ -239,6 +239,42 @@ function App() {
   const [error, setError]               = useState(null);
   const [summary, setSummary]           = useState(null);
   const [summarizing, setSummarizing]   = useState(false);
+  const [serviceHealth, setServiceHealth] = useState({
+    status: 'unknown',
+    model_server: 'unknown',
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchHealth = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/health');
+        if (!response.ok) {
+          throw new Error('Health endpoint unavailable');
+        }
+        const data = await response.json();
+        if (active) {
+          setServiceHealth({
+            status: data.status || 'unknown',
+            model_server: data.model_server || 'unknown',
+          });
+        }
+      } catch {
+        if (active) {
+          setServiceHealth({ status: 'offline', model_server: 'offline' });
+        }
+      }
+    };
+
+    fetchHealth();
+    const timer = setInterval(fetchHealth, 10000);
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
@@ -328,6 +364,45 @@ function App() {
       <div style={{ maxWidth: 820, margin: '0 auto' }}>
         {/* Hero header */}
         <Header />
+
+        {/* Service health badge */}
+        <div style={{
+          marginBottom: 14,
+          display: 'flex',
+          justifyContent: 'center',
+        }}>
+          <span style={{
+            fontSize: 12,
+            fontWeight: 600,
+            padding: '6px 12px',
+            borderRadius: 999,
+            border: serviceHealth.model_server === 'ready'
+              ? '1px solid rgba(34,197,94,0.4)'
+              : serviceHealth.model_server === 'offline'
+                ? '1px solid rgba(239,68,68,0.4)'
+                : '1px solid rgba(148,163,184,0.4)',
+            background: serviceHealth.model_server === 'ready'
+              ? 'rgba(34,197,94,0.12)'
+              : serviceHealth.model_server === 'offline'
+                ? 'rgba(239,68,68,0.12)'
+                : 'rgba(148,163,184,0.12)',
+            color: serviceHealth.model_server === 'ready'
+              ? '#22c55e'
+              : serviceHealth.model_server === 'offline'
+                ? '#ef4444'
+                : '#94a3b8',
+          }}>
+            Model: {
+              serviceHealth.model_server === 'ready'
+                ? 'Online'
+                : serviceHealth.model_server === 'disabled'
+                  ? 'Disabled'
+                  : serviceHealth.model_server === 'offline'
+                    ? 'Offline (Pinecone fallback)'
+                    : 'Starting'
+            }
+          </span>
+        </div>
 
         {/* Main card */}
         <div style={{

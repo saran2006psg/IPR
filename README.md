@@ -77,6 +77,40 @@ python backend/api.py
 
 The API will be available at http://localhost:8000 with documentation at http://localhost:8000/docs
 
+### 6.1 Run with Dedicated Model Server (Recommended)
+
+For faster repeated analysis, run the QA model in a separate terminal so it stays loaded.
+
+Terminal A (model service):
+
+```bash
+python backend/model_server.py
+```
+
+Terminal B (main API):
+
+```bash
+$env:MODEL_SERVER_ENABLED="true"
+$env:MODEL_SERVER_URL="http://localhost:9000/qa"
+$env:QA_BATCH_MODE_ENABLED="true"
+$env:MODEL_SERVER_BATCH_SIZE="24"
+python backend/api.py
+```
+
+In this mode, the main API calls the model service over HTTP and falls back to Pinecone-only similarity reasoning if the model service is temporarily unavailable.
+
+Health endpoint now includes model-server status:
+
+```json
+{
+  "status": "ok",
+  "api": "ready",
+  "model_server": "ready",
+  "model_server_url": "http://localhost:9000/health",
+  "timestamp": "2026-03-31T10:15:30.123456+00:00"
+}
+```
+
 ### 7. Run the Frontend
 
 ```bash
