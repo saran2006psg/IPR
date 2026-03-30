@@ -8,6 +8,12 @@ including Pinecone settings, embedding model configuration, and logging setup.
 import logging
 import os
 
+from dotenv import load_dotenv
+
+
+# Load .env once so all processes share the same runtime settings.
+load_dotenv()
+
 # ============================================================================
 # Pinecone Configuration
 # ============================================================================
@@ -125,6 +131,9 @@ MODEL_SERVER_MAX_RETRIES = int(os.getenv("MODEL_SERVER_MAX_RETRIES", "2"))
 
 MODEL_SERVER_RETRY_BACKOFF_SEC = float(os.getenv("MODEL_SERVER_RETRY_BACKOFF_SEC", "0.4"))
 """Base backoff in seconds between model service retries."""
+
+MODEL_SERVER_DOWN_COOLDOWN_SEC = float(os.getenv("MODEL_SERVER_DOWN_COOLDOWN_SEC", "20"))
+"""Cooldown window after model-server failure before retrying network calls."""
 
 QA_BATCH_MODE_ENABLED = os.getenv("QA_BATCH_MODE_ENABLED", "true").lower() in ["1", "true", "yes"]
 """Whether to use batched QA calls against the model server."""

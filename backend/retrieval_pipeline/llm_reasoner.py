@@ -17,6 +17,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from .config import (
+    MODEL_SERVER_DOWN_COOLDOWN_SEC,
     MODEL_SERVER_BATCH_SIZE,
     MODEL_SERVER_ENABLED,
     MODEL_SERVER_MAX_RETRIES,
@@ -29,6 +30,7 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 _model_service_unavailable = False
+_model_service_down_until = 0.0
 
 # ---------------------------------------------------------------------------
 # Risk-indicator questions per level
@@ -112,10 +114,13 @@ def _filter_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _query_model_server(question: str, context: str) -> Optional[Dict[str, Any]]:
     """Call external QA model server and return answer payload."""
-    global _model_service_unavailable
+    global _model_service_unavailable, _model_service_down_until
 
     if not MODEL_SERVER_ENABLED:
         _model_service_unavailable = True
+        return None
+
+    if _model_service_unavailable and time.time() < _model_service_down_until:
         return None
 
     payload = json.dumps({"question": question, "context": context}).encode("utf-8")
@@ -132,6 +137,7 @@ def _query_model_server(question: str, context: str) -> Optional[Dict[str, Any]]
                 response_data = json.loads(response.read().decode("utf-8"))
 
             _model_service_unavailable = False
+            _model_service_down_until = 0.0
 
             answer = str(response_data.get("answer", "")).strip()
             confidence = float(response_data.get("confidence", -999.0))
@@ -142,6 +148,7 @@ def _query_model_server(question: str, context: str) -> Optional[Dict[str, Any]]
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
             if attempt == MODEL_SERVER_MAX_RETRIES:
                 _model_service_unavailable = True
+                _model_service_down_until = time.time() + MODEL_SERVER_DOWN_COOLDOWN_SEC
                 logger.warning("Model service call failed after retries: %s", exc)
                 return None
             sleep_time = MODEL_SERVER_RETRY_BACKOFF_SEC * (2 ** attempt)
@@ -151,10 +158,13 @@ def _query_model_server(question: str, context: str) -> Optional[Dict[str, Any]]
 
 def _query_model_server_batch(pairs: List[Dict[str, str]]) -> List[Optional[Dict[str, Any]]]:
     """Call external QA batch endpoint and return aligned answer payloads."""
-    global _model_service_unavailable
+    global _model_service_unavailable, _model_service_down_until
 
     if not MODEL_SERVER_ENABLED:
         _model_service_unavailable = True
+        return [None for _ in pairs]
+
+    if _model_service_unavailable and time.time() < _model_service_down_until:
         return [None for _ in pairs]
 
     if not pairs:
@@ -194,12 +204,19 @@ def _query_model_server_batch(pairs: List[Dict[str, str]]) -> List[Optional[Dict
                     parsed.append(None)
                 chunk_result = parsed[:len(chunk)]
                 _model_service_unavailable = False
+                _model_service_down_until = 0.0
                 break
             except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
                 if attempt == MODEL_SERVER_MAX_RETRIES:
                     logger.warning("Model service batch call failed after retries: %s", exc)
                     _model_service_unavailable = True
+                    _model_service_down_until = time.time() + MODEL_SERVER_DOWN_COOLDOWN_SEC
                     chunk_result = [None for _ in chunk]
+                    results.extend(chunk_result)
+                    remaining = len(pairs) - (start + len(chunk))
+                    if remaining > 0:
+                        results.extend([None for _ in range(remaining)])
+                    return results
                 else:
                     sleep_time = MODEL_SERVER_RETRY_BACKOFF_SEC * (2 ** attempt)
                     time.sleep(sleep_time)
