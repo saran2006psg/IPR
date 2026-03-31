@@ -13,17 +13,28 @@ from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from chat_orchestrator import answer_contract_question, build_summary
+from chat_session_store import (
+    add_message,
+    cleanup_expired_sessions,
+    create_session,
+    get_messages,
+    get_session,
+    init_db,
+    is_db_ready,
+    touch_session,
+)
 from retrieval_pipeline import analyze_contract
 from retrieval_pipeline.pdf_extractor import validate_pdf
-from retrieval_pipeline.config import setup_logging
+from retrieval_pipeline.config import CHAT_MAX_QUESTION_CHARS, CHAT_SESSION_TTL_SEC, setup_logging
 from retrieval_pipeline.llm_reasoner import get_model_service_status, summarize_contract_analysis
 
 # Configure logging
 setup_logging()
 logger = logging.getLogger(__name__)
+init_db()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -62,6 +73,7 @@ class ClauseResult(BaseModel):
 class AnalysisResponse(BaseModel):
     """Complete contract analysis response."""
     results: List[ClauseResult]
+    session_id: Optional[str] = None
 
 
 class SummaryResponse(BaseModel):
@@ -74,8 +86,50 @@ class HealthResponse(BaseModel):
     status: str
     api: str
     model_server: str
+    chatbot_db: str
     model_server_url: str
     timestamp: str
+
+
+class ChatUploadResponse(BaseModel):
+    """Response returned when creating a chat session from a contract."""
+    session_id: str
+    clause_count: int
+    high_risk_count: int
+    summary: str
+
+
+class ChatAskRequest(BaseModel):
+    """Chat question payload."""
+    session_id: str
+    question: str
+
+
+class Citation(BaseModel):
+    """Source citation for chatbot responses."""
+    clause_index: int
+    risk_level: str
+    relevance_score: float
+    snippet: str
+
+
+class ChatMessage(BaseModel):
+    """Single message in chat history."""
+    role: str
+    content: str
+    confidence: Optional[float] = None
+    fallback_used: bool = False
+    citations: List[Citation] = []
+
+
+class ChatAskResponse(BaseModel):
+    """Assistant response for a user question."""
+    session_id: str
+    answer: str
+    confidence: float
+    fallback_used: bool
+    citations: List[Citation]
+    history: List[ChatMessage]
 
 
 # Health check endpoint
@@ -89,12 +143,17 @@ async def health_check():
     """
     model_info = get_model_service_status()
     model_status = model_info.get("status", "unknown")
-    overall = "ok" if model_status in ["ready", "disabled", "loading"] else "degraded"
+    db_ready = is_db_ready()
+    overall = "ok" if model_status in ["ready", "disabled", "loading"] and db_ready else "degraded"
+
+    # Opportunistic cleanup of old sessions.
+    cleanup_expired_sessions(CHAT_SESSION_TTL_SEC)
 
     return HealthResponse(
         status=overall,
         api="ready",
         model_server=model_status,
+        chatbot_db="ready" if db_ready else "error",
         model_server_url=str(model_info.get("url", "")),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
@@ -199,8 +258,11 @@ async def analyze_contract_endpoint(file: UploadFile = File(...)):
             )
             for analysis in analyses
         ]
+
+        session_summary = build_summary(analyses)
+        session_id = create_session(file.filename or "uploaded_contract.pdf", analyses, session_summary)
         
-        return AnalysisResponse(results=results)
+        return AnalysisResponse(results=results, session_id=session_id)
         
     except HTTPException:
         # Re-raise HTTP exceptions (validation errors)
@@ -325,6 +387,99 @@ async def summarize_contract_endpoint(file: UploadFile = File(...)):
                 logger.info(f"Cleaned up temporary file: {temp_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete temporary file: {e}")
+
+
+@app.post("/chat/upload", response_model=ChatUploadResponse)
+async def upload_for_chat_endpoint(file: UploadFile = File(...)):
+    """Upload a PDF, analyze it, and create a persistent chatbot session."""
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    temp_path = None
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+        temp_path = tmp.name
+        content = await file.read()
+        tmp.write(content)
+        tmp.close()
+
+        validate_pdf(temp_path)
+        analyses = analyze_contract(temp_path, verbose=False)
+        summary = build_summary(analyses)
+        session_id = create_session(file.filename or "uploaded_contract.pdf", analyses, summary)
+
+        high_risk_count = len([a for a in analyses if a.get("risk_level") == "HIGH"])
+        return ChatUploadResponse(
+            session_id=session_id,
+            clause_count=len(analyses),
+            high_risk_count=high_risk_count,
+            summary=summary,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Chat upload bootstrap failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Chat bootstrap failed: {str(e)}")
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
+
+
+@app.post("/chat/ask", response_model=ChatAskResponse)
+async def ask_chat_question(payload: ChatAskRequest):
+    """Answer a user question from a previously analyzed contract session."""
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    if len(question) > CHAT_MAX_QUESTION_CHARS:
+        raise HTTPException(status_code=400, detail=f"Question is too long (max {CHAT_MAX_QUESTION_CHARS} chars).")
+
+    cleanup_expired_sessions(CHAT_SESSION_TTL_SEC)
+    session = get_session(payload.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found or expired.")
+
+    history = get_messages(payload.session_id, limit=30)
+
+    add_message(payload.session_id, "user", question)
+    answer_payload = answer_contract_question(
+        question=question,
+        analyses=session["analyses"],
+        summary=session["summary"],
+        chat_history=history,
+    )
+
+    add_message(
+        payload.session_id,
+        "assistant",
+        answer_payload["answer"],
+        confidence=float(answer_payload.get("confidence", 0.0)),
+        fallback_used=bool(answer_payload.get("fallback_used", False)),
+        citations=answer_payload.get("citations", []),
+    )
+    touch_session(payload.session_id)
+
+    fresh_history = get_messages(payload.session_id, limit=30)
+    return ChatAskResponse(
+        session_id=payload.session_id,
+        answer=answer_payload["answer"],
+        confidence=float(answer_payload.get("confidence", 0.0)),
+        fallback_used=bool(answer_payload.get("fallback_used", False)),
+        citations=[Citation(**c) for c in answer_payload.get("citations", [])],
+        history=[
+            ChatMessage(
+                role=m["role"],
+                content=m["content"],
+                confidence=m.get("confidence"),
+                fallback_used=bool(m.get("fallback_used", False)),
+                citations=[Citation(**c) for c in m.get("citations", [])],
+            )
+            for m in fresh_history
+        ],
+    )
 
 
 if __name__ == "__main__":

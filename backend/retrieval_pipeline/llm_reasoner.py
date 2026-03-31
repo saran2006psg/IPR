@@ -26,6 +26,8 @@ from .config import (
     MODEL_SERVER_URL,
     QA_BATCH_MODE_ENABLED,
     REASONER_SIMILARITY_THRESHOLD,
+    MIN_ANSWER_LENGTH,
+    SUMMARY_MIN_CONFIDENCE,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,6 +111,103 @@ def _filter_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Answer Quality Validation (Phase 1)
+# ---------------------------------------------------------------------------
+
+def _is_incomplete_answer(answer: str) -> bool:
+    """Detect if answer is likely a truncated/incomplete span.
+    
+    Examples of incomplete answers:
+    - Starts with conjunctions: "and", "or", "but"
+    - Ends with open paren: "("
+    - Obvious mid-word cutoff patterns
+    """
+    if not answer:
+        return True
+    
+    answer_lower = answer.lower().strip()
+    
+    # Reject if starts with conjunctions (likely middle of sentence)
+    if any(answer_lower.startswith(conj + " ") for conj in ["and", "or", "but", "the ", "a "]):
+        return True
+    
+    # Reject if ends with open paren or comma (incomplete thought)
+    if answer.rstrip().endswith(("(", ",", ";")):
+        return True
+    
+    # Reject if very short and lowercase (likely fragment)
+    if len(answer) <= 3 and answer_lower == answer:
+        return True
+    
+    return False
+
+
+def _score_answer_quality(answer: str, confidence: float) -> float:
+    """Score answer quality from 0.0 (bad) to 1.0 (excellent).
+    
+    Considers:
+    - Confidence score (normalized to 0-1 range, expected range -5 to +5)
+    - Answer length (longer is better, but diminishing returns)
+    - Completeness (penalize if likely truncated)
+    - Capitalization (proper answers usually capitalized)
+    
+    Returns: float in [0.0, 1.0] range.
+    """
+    if not answer or len(answer.strip()) < MIN_ANSWER_LENGTH:
+        return 0.0
+    
+    answer_clean = answer.strip()
+    
+    # Penalize incomplete answers
+    if _is_incomplete_answer(answer_clean):
+        return 0.1
+    
+    # Normalize confidence from expected range (-5, +5) to (0, 1)
+    # confidence -1 → 0.2, confidence 0 → 0.5, confidence +1 → 0.8, confidence +2 → 0.95
+    confidence_normalized = max(0.0, min(1.0, (confidence + 5.0) / 10.0))
+    
+    # Length factor: prefer 20-150 chars, penalize very short or very long
+    length_score = min(1.0, len(answer_clean) / 150.0)
+    if len(answer_clean) < 10:
+        length_score *= 0.5  # Penalize very short answers
+    
+    # Capitalization factor: proper answers usually start with capital or quote
+    cap_score = 0.9 if (answer_clean[0].isupper() or answer_clean[0] in '"\'') else 0.7
+    
+    # Weighted combination
+    quality = (
+        0.5 * confidence_normalized +  # Confidence is primary signal
+        0.3 * length_score +            # Length provides context quality hint
+        0.2 * cap_score                 # Capitalization is weakest signal
+    )
+    
+    return round(quality, 2)
+
+
+def _normalize_answer(answer: str) -> str:
+    """Clean and normalize extracted answer, removing common artifacts.
+    
+    - Strip whitespace
+    - Remove leading/trailing fragments: "and ", "or ", etc.
+    - Collapse multiple spaces
+    """
+    answer = answer.strip()
+    
+    # Remove leading conjunctions/articles that indicate truncation
+    leading_prefixes = ["and ", "or ", "but ", "the ", "a "]
+    while any(answer.lower().startswith(p) for p in leading_prefixes):
+        for prefix in leading_prefixes:
+            if answer.lower().startswith(prefix):
+                answer = answer[len(prefix):].strip()
+                break
+    
+    # Collapse multiple spaces
+    answer = re.sub(r"\s+", " ", answer)
+    
+    return answer
+
+
+# ---------------------------------------------------------------------------
 # QA inference
 # ---------------------------------------------------------------------------
 
@@ -142,9 +241,20 @@ def _query_model_server(question: str, context: str) -> Optional[Dict[str, Any]]
             answer = str(response_data.get("answer", "")).strip()
             confidence = float(response_data.get("confidence", -999.0))
 
-            if len(answer) < 2 or confidence < -5.0:
+            # PHASE 1: Stricter validation with quality scoring
+            if len(answer) < MIN_ANSWER_LENGTH:  # Changed from < 2
                 return None
-            return {"answer": answer, "confidence": round(confidence, 2)}
+            if confidence < -1.0:  # Changed from < -5.0 (much stricter)
+                return None
+            
+            quality_score = _score_answer_quality(answer, confidence)
+            if quality_score < 0.3:  # Reject low-quality answers even if confidence threshold passed
+                logger.debug(f"Answer rejected due to low quality score {quality_score}: {answer[:50]}")
+                return None
+            
+            answer = _normalize_answer(answer)  # Clean up fragments
+            logger.debug(f"PHASE 1: Accepted answer (conf={confidence:.2f}, quality={quality_score:.2f}): {answer[:80]}")
+            return {"answer": answer, "confidence": round(confidence, 2), "quality": quality_score}
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
             if attempt == MODEL_SERVER_MAX_RETRIES:
                 _model_service_unavailable = True
@@ -195,10 +305,17 @@ def _query_model_server_batch(pairs: List[Dict[str, str]]) -> List[Optional[Dict
                 for item in responses:
                     answer = str(item.get("answer", "")).strip()
                     confidence = float(item.get("confidence", -999.0))
-                    if len(answer) < 2 or confidence < -5.0:
+                    
+                    # PHASE 1: Stricter validation with quality scoring
+                    if len(answer) < MIN_ANSWER_LENGTH or confidence < -1.0:
                         parsed.append(None)
                     else:
-                        parsed.append({"answer": answer, "confidence": round(confidence, 2)})
+                        quality_score = _score_answer_quality(answer, confidence)
+                        if quality_score < 0.3:
+                            parsed.append(None)
+                        else:
+                            answer = _normalize_answer(answer)
+                            parsed.append({"answer": answer, "confidence": round(confidence, 2), "quality": quality_score})
 
                 while len(parsed) < len(chunk):
                     parsed.append(None)
@@ -402,92 +519,40 @@ def get_model_service_status() -> Dict[str, Any]:
 
 def summarize_contract_analysis(analyses: List[Dict[str, Any]]) -> str:
     """
-    Generate a comprehensive summary of the contract analysis results.
+    Generate a summary of the contract analysis results using the local QA model.
     
-    This function takes the individual clause analyses and creates an overall
-    summary of the document's risk profile, key findings, and recommendations.
-    
-    Args:
-        analyses: List of clause analysis results from analyze_clauses_with_llm_batch
-        
-    Returns:
-        A human-readable summary string
+    Uses stricter confidence threshold (SUMMARY_MIN_CONFIDENCE) for better quality.
     """
     if not analyses:
         return "No clauses were analyzed. Unable to generate summary."
     
-    def _clause_preview(text: str) -> str:
-        cleaned = re.sub(r"\s+", " ", text or "").strip()
-        cleaned = re.sub(r"^\d+[.)\-:\s]+", "", cleaned)
-        return cleaned[:100] + ("..." if len(cleaned) > 100 else "")
-
-    # Count risk levels
-    risk_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
-    high_risk_clauses = []
-    medium_risk_clauses = []
-    
-    for analysis in analyses:
-        risk_level = analysis.get("risk_level", "UNKNOWN")
-        risk_counts[risk_level] = risk_counts.get(risk_level, 0) + 1
+    # Build text context from high/medium risk clauses first, fallback to all clauses
+    high_med_clauses = [
+        a.get("clause_text", "") for a in analyses 
+        if a.get("risk_level") in ("HIGH", "MEDIUM")
+    ]
+    if high_med_clauses:
+        context = " ".join(high_med_clauses)
+    else:
+        context = " ".join([a.get("clause_text", "") for a in analyses])       
         
-        if risk_level == "HIGH":
-            high_risk_clauses.append(_clause_preview(analysis.get("clause_text", "")))
-        elif risk_level == "MEDIUM":
-            medium_risk_clauses.append(_clause_preview(analysis.get("clause_text", "")))
+    question = "What are the critical risks and obligations in this contract?" 
+    res = _query_model_server(question, context)
+
+    if res and res.get("answer") and res.get("quality", 0.0) >= SUMMARY_MIN_CONFIDENCE:
+        return f"Contract Summary (AI Generated):\n{res['answer']}\n\nNote: This is an extractive summary based on identified HIGH and MEDIUM risk clauses."
+
+    # PHASE 1: Better fallback message instead of generic error
+    high_count = len([a for a in analyses if a.get("risk_level") == "HIGH"])
+    med_count = len([a for a in analyses if a.get("risk_level") == "MEDIUM"])
     
-    total_clauses = len(analyses)
+    if high_count > 0 or med_count > 0:
+        return (
+            f"**Contract Summary (Structured)**\n\n"
+            f"HIGH RISK CLAUSES: {high_count}\n"
+            f"MEDIUM RISK CLAUSES: {med_count}\n"
+            f"Total clauses analyzed: {len(analyses)}\n\n"
+            f"*Note: AI-generated summary quality was low. Please review the detailed analysis results below.*"
+        )
     
-    # Build summary
-    summary_parts = []
-    summary_parts.append(f"## Contract Analysis Summary\n")
-    summary_parts.append(f"**Total Clauses Analyzed:** {total_clauses}\n")
-    summary_parts.append(f"**Risk Distribution:**")
-    summary_parts.append(f"- High Risk: {risk_counts['HIGH']} ({risk_counts['HIGH']/total_clauses*100:.1f}%)")
-    summary_parts.append(f"- Medium Risk: {risk_counts['MEDIUM']} ({risk_counts['MEDIUM']/total_clauses*100:.1f}%)")
-    summary_parts.append(f"- Low Risk: {risk_counts['LOW']} ({risk_counts['LOW']/total_clauses*100:.1f}%)")
-    summary_parts.append(f"- Unknown: {risk_counts['UNKNOWN']} ({risk_counts['UNKNOWN']/total_clauses*100:.1f}%)\n")
-    
-    # Overall assessment
-    if risk_counts['HIGH'] > total_clauses * 0.2:  # More than 20% high risk
-        overall_risk = "HIGH"
-        assessment = "This contract contains significant risk factors that require careful review."
-    elif risk_counts['HIGH'] + risk_counts['MEDIUM'] > total_clauses * 0.3:  # More than 30% medium/high
-        overall_risk = "MEDIUM"
-        assessment = "This contract has moderate risk factors that should be evaluated."
-    else:
-        overall_risk = "LOW"
-        assessment = "This contract appears to have standard risk levels."
-    
-    summary_parts.append(f"**Overall Risk Assessment:** {overall_risk}")
-    summary_parts.append(f"{assessment}\n")
-    
-    # Key findings
-    summary_parts.append("**Key Findings:**")
-    if high_risk_clauses:
-        summary_parts.append(f"- **Critical Issues:** {len(high_risk_clauses)} high-risk clauses identified")
-        for i, clause in enumerate(high_risk_clauses[:3]):  # Show up to 3 examples
-            summary_parts.append(f"  {i+1}. {clause}")
-        if len(high_risk_clauses) > 3:
-            summary_parts.append(f"  ... and {len(high_risk_clauses) - 3} more")
-    
-    if medium_risk_clauses:
-        summary_parts.append(f"- **Notable Concerns:** {len(medium_risk_clauses)} medium-risk clauses identified")
-    
-    # Recommendations
-    summary_parts.append("\n**Recommendations:**")
-    if overall_risk == "HIGH":
-        summary_parts.append("- Seek legal counsel for review of high-risk clauses")
-        summary_parts.append("- Consider renegotiating problematic terms")
-        summary_parts.append("- Document all concerns and mitigation strategies")
-    elif overall_risk == "MEDIUM":
-        summary_parts.append("- Review medium-risk clauses with legal team")
-        summary_parts.append("- Ensure proper monitoring and compliance mechanisms")
-        summary_parts.append("- Consider adding protective language where possible")
-    else:
-        summary_parts.append("- Contract appears acceptable with standard review")
-        summary_parts.append("- Monitor for any changes in business circumstances")
-    
-    summary_parts.append("- Maintain clear communication with all parties")
-    summary_parts.append("- Keep detailed records of all contract-related activities")
-    
-    return "\n".join(summary_parts)
+    return "No significant risks identified in this contract. The AI model found only LOW or UNKNOWN risk clauses."

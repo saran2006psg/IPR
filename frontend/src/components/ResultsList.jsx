@@ -127,21 +127,33 @@ function ResultsList({ results }) {
               key={tab}
               onClick={() => setFilter(tab)}
               style={{
-                padding: '5px 14px',
+                padding: '6px 16px',
                 borderRadius: 99,
                 border: `1px solid ${active ? tabColor : 'rgba(255,255,255,0.08)'}`,
                 background: active ? `${tabColor}18` : 'transparent',
-                color: active ? tabColor : '#64748b',
-                fontSize: 12,
+                color: active ? tabColor : '#94a3b8',
+                fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
                 fontFamily: 'Inter, sans-serif',
-                transition: 'all 0.15s ease',
+                transition: 'all 0.2s ease',
+              }}
+              onMouseOver={(e) => {
+                if (!active) {
+                    e.target.style.background = 'rgba(255,255,255,0.05)';
+                    e.target.style.color = '#e2e8f0';
+                }
+              }}
+              onMouseOut={(e) => {
+                if (!active) {
+                    e.target.style.background = 'transparent';
+                    e.target.style.color = '#94a3b8';
+                }
               }}
             >
               {tab}
               {tab !== 'ALL' && (
-                <span style={{ marginLeft: 5, opacity: 0.7 }}>
+                <span style={{ marginLeft: 6, opacity: 0.8, fontSize: 11, background: active ? `${tabColor}33` : 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 10 }}>
                   {counts[tab] || 0}
                 </span>
               )}

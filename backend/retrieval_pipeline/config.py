@@ -143,6 +143,44 @@ MODEL_SERVER_BATCH_SIZE = int(os.getenv("MODEL_SERVER_BATCH_SIZE", "24"))
 
 
 # ============================================================================
+# Chatbot Configuration
+# ============================================================================
+
+CHAT_DB_PATH = os.getenv(
+    "CHAT_DB_PATH",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "chat_sessions.db")),
+)
+"""Path to SQLite DB storing chatbot sessions and message history."""
+
+CHAT_SESSION_TTL_SEC = int(os.getenv("CHAT_SESSION_TTL_SEC", "86400"))
+"""Time-to-live for chat sessions in seconds."""
+
+CHAT_HISTORY_TURNS = int(os.getenv("CHAT_HISTORY_TURNS", "8"))
+"""How many recent turns are included in chat context."""
+
+CHAT_CONTEXT_CLAUSES = int(os.getenv("CHAT_CONTEXT_CLAUSES", "3"))
+"""How many relevant clauses to include for each user question."""
+
+CHAT_MIN_CONFIDENCE = float(os.getenv("CHAT_MIN_CONFIDENCE", "-0.5"))
+"""Minimum QA confidence required before using model answer directly. IMPROVED: -2.5 → -0.5"""
+
+SUMMARY_MIN_CONFIDENCE = float(os.getenv("SUMMARY_MIN_CONFIDENCE", "0.5"))
+"""Minimum QA confidence required for summarization answers."""
+
+MIN_ANSWER_LENGTH = int(os.getenv("MIN_ANSWER_LENGTH", "8"))
+"""Minimum answer length (chars) to accept. IMPROVED: 2 → 8. Rejects garbage like 'No' or 'X'."""
+
+MIN_ANSWER_FOR_FALLBACK = int(os.getenv("MIN_ANSWER_FOR_FALLBACK", "10"))
+"""If model answer < this length, prefer alternative strategy (multi-answer fallback)."""
+
+CHAT_MAX_QUESTION_CHARS = int(os.getenv("CHAT_MAX_QUESTION_CHARS", "1000"))
+"""Maximum accepted user question length."""
+
+CHAT_MAX_ANSWER_CHARS = int(os.getenv("CHAT_MAX_ANSWER_CHARS", "500"))
+"""Maximum assistant answer length."""
+
+
+# ============================================================================
 # Logging Configuration
 # ============================================================================
 

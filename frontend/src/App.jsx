@@ -3,6 +3,7 @@ import Header from './components/Header';
 import FileUpload from './components/FileUpload';
 import LoadingIndicator from './components/LoadingIndicator';
 import ResultsList from './components/ResultsList';
+import ChatPanel from './components/ChatPanel';
 import './index.css';
 
 function ErrorBanner({ message, onDismiss }) {
@@ -243,6 +244,10 @@ function App() {
     status: 'unknown',
     model_server: 'unknown',
   });
+  const [activeTab, setActiveTab] = useState('results');
+  const [chatSessionId, setChatSessionId] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -280,6 +285,10 @@ function App() {
     setSelectedFile(file);
     setError(null);
     setResults(null);
+    setSummary(null);
+    setChatSessionId(null);
+    setChatMessages([]);
+    setActiveTab('results');
   };
 
   const handleAnalyze = async () => {
@@ -308,6 +317,9 @@ function App() {
 
       const data = await response.json();
       setResults(data.results);
+      setChatSessionId(data.session_id || null);
+      setChatMessages([]);
+      setActiveTab('results');
     } catch (err) {
       console.error('Analysis failed:', err);
       setError(
@@ -352,11 +364,48 @@ function App() {
     }
   };
 
+  const handleChatSend = async (question) => {
+    if (!chatSessionId || !question?.trim()) {
+      setError('Chat session is not ready yet. Upload and analyze the contract first, then open the Chat tab.');
+      return;
+    }
+
+    const userMessage = { role: 'user', content: question, citations: [] };
+    setChatMessages((prev) => [...prev, userMessage]);
+    setChatLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('http://localhost:8000/chat/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: chatSessionId, question }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Chat error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setChatMessages(data.history || []);
+    } catch (err) {
+      console.error('Chat failed:', err);
+      setError(err.message || 'Failed to get chat response.');
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   const handleReset = () => {
     setSelectedFile(null);
     setResults(null);
     setSummary(null);
     setError(null);
+    setChatSessionId(null);
+    setChatMessages([]);
+    setChatLoading(false);
+    setActiveTab('results');
   };
 
   return (
@@ -434,67 +483,114 @@ function App() {
           {/* Results */}
           {results && !loading && (
             <>
-              <ResultsList results={results} />
-
-              {/* Summary Section */}
-              <div style={{ marginTop: 32 }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 20,
-                }}>
-                  <h2 style={{ fontSize: 20, fontWeight: 700, color: '#e8ecf4' }}>
-                    Document Summary
-                  </h2>
-                  {!summary && !summarizing && (
-                    <button
-                      className="btn-primary"
-                      onClick={handleSummarize}
-                      disabled={summarizing}
-                      style={{ fontSize: 14, padding: '8px 16px' }}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ marginRight: 8 }}>
-                        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                      Generate Summary
-                    </button>
-                  )}
-                </div>
-
-                {/* Summarizing indicator */}
-                {summarizing && (
-                  <div style={{
-                    textAlign: 'center',
-                    padding: '40px 0',
-                    color: '#64748b',
-                  }}>
-                    <div style={{
-                      width: 24,
-                      height: 24,
-                      border: '2px solid #4f72ff',
-                      borderTop: '2px solid transparent',
-                      borderRadius: '50%',
-                      animation: 'spin 1s linear infinite',
-                      margin: '0 auto 16px',
-                    }} />
-                    Generating summary...
-                  </div>
-                )}
-
-                {/* Summary content */}
-                {summary && !summarizing && (
-                  <div style={{
-                    background: 'rgba(17,24,39,0.6)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: 12,
-                    padding: '24px',
-                    color: '#e8ecf4',
-                  }}>
-                    <SummaryDisplay summary={summary} />
-                  </div>
-                )}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setActiveTab('results')}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: 99,
+                    border: activeTab === 'results' ? '1px solid #4f72ff' : '1px solid rgba(255,255,255,0.12)',
+                    background: activeTab === 'results' ? 'rgba(79,114,255,0.14)' : 'transparent',
+                    color: activeTab === 'results' ? '#93c5fd' : '#94a3b8',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Results
+                </button>
+                <button
+                  onClick={() => setActiveTab('chat')}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: 99,
+                    border: activeTab === 'chat' ? '1px solid #4f72ff' : '1px solid rgba(255,255,255,0.12)',
+                    background: activeTab === 'chat' ? 'rgba(79,114,255,0.14)' : 'transparent',
+                    color: activeTab === 'chat' ? '#93c5fd' : '#94a3b8',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Chat
+                </button>
               </div>
+
+              {activeTab === 'results' && (
+                <>
+                  <ResultsList results={results} />
+
+                  {/* Summary Section */}
+                  <div style={{ marginTop: 32 }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: 20,
+                    }}>
+                      <h2 style={{ fontSize: 20, fontWeight: 700, color: '#e8ecf4' }}>
+                        Document Summary
+                      </h2>
+                      {!summary && !summarizing && (
+                        <button
+                          className="btn-primary"
+                          onClick={handleSummarize}
+                          disabled={summarizing}
+                          style={{ fontSize: 14, padding: '8px 16px' }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ marginRight: 8 }}>
+                            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                          Generate Summary
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Summarizing indicator */}
+                    {summarizing && (
+                      <div style={{
+                        textAlign: 'center',
+                        padding: '40px 0',
+                        color: '#64748b',
+                      }}>
+                        <div style={{
+                          width: 24,
+                          height: 24,
+                          border: '2px solid #4f72ff',
+                          borderTop: '2px solid transparent',
+                          borderRadius: '50%',
+                          animation: 'spin 1s linear infinite',
+                          margin: '0 auto 16px',
+                        }} />
+                        Generating summary...
+                      </div>
+                    )}
+
+                    {/* Summary content */}
+                    {summary && !summarizing && (
+                      <div style={{
+                        background: 'rgba(17,24,39,0.6)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 12,
+                        padding: '24px',
+                        color: '#e8ecf4',
+                      }}>
+                        <SummaryDisplay summary={summary} />
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'chat' && (
+                <ChatPanel
+                  sessionId={chatSessionId}
+                  messages={chatMessages}
+                  loading={chatLoading}
+                  disabled={!chatSessionId}
+                  onSend={handleChatSend}
+                />
+              )}
 
               {/* Reset button */}
               <div style={{ textAlign: 'center', marginTop: 28 }}>
