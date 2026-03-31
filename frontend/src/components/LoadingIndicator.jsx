@@ -31,20 +31,20 @@ function LoadingIndicator() {
         <div style={{
           position: 'absolute', inset: 0,
           borderRadius: '50%',
-          border: '3px solid rgba(79,114,255,0.15)',
+          border: '3px solid rgba(139,92,246,0.15)',
         }} />
         <div style={{
           position: 'absolute', inset: 0,
           borderRadius: '50%',
           border: '3px solid transparent',
-          borderTopColor: '#4f72ff',
+          borderTopColor: '#8b5cf6',
           animation: 'spin 0.9s linear infinite',
         }} />
         <div style={{
           position: 'absolute',
           inset: '14px',
           borderRadius: '50%',
-          background: 'linear-gradient(135deg, #3b5bdb22, #4f72ff33)',
+          background: 'linear-gradient(135deg, #6b43ff22, #8b5cf633)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 22,
         }}>
@@ -54,10 +54,10 @@ function LoadingIndicator() {
 
       {/* Stage label */}
       <div style={{ textAlign: 'center' }}>
-        <p style={{ color: '#e8ecf4', fontWeight: 600, fontSize: 16, marginBottom: 4 }}>
+        <p style={{ color: '#f3f0ff', fontWeight: 600, fontSize: 16, marginBottom: 4 }}>
           {STAGES[active].label}…
         </p>
-        <p style={{ color: '#64748b', fontSize: 13 }}>
+        <p style={{ color: '#7b6aae', fontSize: 13 }}>
           Step {active + 1} of {STAGES.length}
         </p>
       </div>
@@ -81,9 +81,9 @@ function LoadingIndicator() {
               padding: '10px 14px',
               borderRadius: 8,
               background: current
-                ? 'rgba(79,114,255,0.1)'
-                : done ? 'rgba(34,197,94,0.07)' : 'rgba(255,255,255,0.02)',
-              border: `1px solid ${current ? 'rgba(79,114,255,0.3)' : done ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.04)'}`,
+                ? 'rgba(139,92,246,0.1)'
+                : done ? 'rgba(16,185,129,0.07)' : 'rgba(255,255,255,0.02)',
+              border: `1px solid ${current ? 'rgba(139,92,246,0.3)' : done ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.04)'}`,
               transition: 'all 0.3s ease',
             }}>
               {/* Step indicator */}
@@ -97,8 +97,8 @@ function LoadingIndicator() {
                 justifyContent: 'center',
                 fontSize: 11,
                 fontWeight: 700,
-                background: done ? '#22c55e' : current ? '#4f72ff' : 'rgba(255,255,255,0.06)',
-                color: done || current ? '#fff' : '#475569',
+                background: done ? '#10b981' : current ? '#8b5cf6' : 'rgba(255,255,255,0.06)',
+                color: done || current ? '#fff' : '#5a4a9c',
               }}>
                 {done ? (
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
@@ -109,7 +109,7 @@ function LoadingIndicator() {
               <span style={{
                 fontSize: 13,
                 fontWeight: current ? 600 : 400,
-                color: done ? '#22c55e' : current ? '#e8ecf4' : '#475569',
+                color: done ? '#10b981' : current ? '#f3f0ff' : '#5a4a9c',
                 flex: 1,
               }}>
                 {stage.label}
@@ -118,9 +118,9 @@ function LoadingIndicator() {
                 <div style={{
                   width: 6, height: 6,
                   borderRadius: '50%',
-                  background: '#4f72ff',
+                  background: '#8b5cf6',
                   animation: 'spin 1s ease-in-out infinite',
-                  boxShadow: '0 0 6px #4f72ff',
+                  boxShadow: '0 0 6px #8b5cf6',
                 }} />
               )}
             </div>

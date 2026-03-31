@@ -3,29 +3,38 @@ import React from 'react';
 function Header() {
   return (
     <header style={{ textAlign: 'center', padding: '48px 0 32px' }}>
-      {/* Shield logo */}
+      {/* Geometric Logo */}
       <div style={{
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        width: 64,
-        height: 64,
-        borderRadius: 16,
-        background: 'linear-gradient(135deg, #3b5bdb22, #4f72ff33)',
-        border: '1px solid #4f72ff44',
-        marginBottom: 20,
-        boxShadow: '0 0 32px rgba(79,114,255,0.18)',
+        width: 72,
+        height: 72,
+        borderRadius: 20,
+        background: 'linear-gradient(135deg, rgba(107,67,255,0.1), rgba(139,92,246,0.25))',
+        border: '1px solid rgba(139,92,246,0.3)',
+        marginBottom: 24,
+        boxShadow: '0 8px 32px rgba(139,92,246,0.25), inset 0 2px 0 rgba(255,255,255,0.1)',
+        position: 'relative',
+        overflow: 'hidden'
       }}>
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-          <path
-            d="M12 2L3 6v6c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V6L12 2z"
-            fill="url(#shield-grad)"
-          />
-          <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        {/* Glow effect inside */}
+        <div style={{
+          position: 'absolute',
+          top: -20, right: -20, width: 40, height: 40,
+          background: '#8b5cf6', filter: 'blur(30px)', opacity: 0.5
+        }} />
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+          {/* A futuristic abstract nexus / document shape */}
+          <path d="M12 2L22 7L12 12L2 7L12 2Z" stroke="url(#logo-grad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M2 17L12 22L22 17" stroke="url(#logo-grad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M2 12L12 17L22 12" stroke="url(#logo-grad)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          <circle cx="12" cy="12" r="3" fill="#a78bfa" />
           <defs>
-            <linearGradient id="shield-grad" x1="3" y1="2" x2="21" y2="23" gradientUnits="userSpaceOnUse">
-              <stop stopColor="#3b5bdb" />
-              <stop offset="1" stopColor="#4f72ff" />
+            <linearGradient id="logo-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#f3f0ff" />
+              <stop offset="0.5" stopColor="#a78bfa" />
+              <stop offset="1" stopColor="#8b5cf6" />
             </linearGradient>
           </defs>
         </svg>
@@ -35,7 +44,7 @@ function Header() {
         fontSize: 'clamp(26px, 4vw, 38px)',
         fontWeight: 800,
         letterSpacing: '-0.02em',
-        background: 'linear-gradient(135deg, #e8ecf4 30%, #94a3b8)',
+        background: 'linear-gradient(135deg, #f3f0ff 30%, #b1a4f0)',
         WebkitBackgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
         backgroundClip: 'text',
@@ -46,7 +55,7 @@ function Header() {
           marginLeft: 10,
           fontSize: 'clamp(14px, 2vw, 18px)',
           fontWeight: 500,
-          background: 'linear-gradient(90deg, #4f72ff, #7c9dff)',
+          background: 'linear-gradient(90deg, #8b5cf6, #a78bfa)',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
           backgroundClip: 'text',
@@ -56,7 +65,7 @@ function Header() {
       </h1>
 
       <p style={{
-        color: '#64748b',
+        color: '#7b6aae',
         fontSize: '15px',
         fontWeight: 400,
         maxWidth: 480,
@@ -71,7 +80,7 @@ function Header() {
       <div style={{
         width: 60,
         height: 2,
-        background: 'linear-gradient(90deg, transparent, #4f72ff, transparent)',
+        background: 'linear-gradient(90deg, transparent, #8b5cf6, transparent)',
         margin: '24px auto 0',
         borderRadius: 99,
       }} />

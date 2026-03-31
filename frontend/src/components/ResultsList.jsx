@@ -46,14 +46,14 @@ function ResultsList({ results }) {
         flexWrap: 'wrap',
         gap: 10,
       }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#e8ecf4' }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#f3f0ff' }}>
           Analysis Results
         </h2>
         <span style={{
           fontSize: 12, fontWeight: 600,
-          color: '#4f72ff',
-          background: 'rgba(79,114,255,0.1)',
-          border: '1px solid rgba(79,114,255,0.25)',
+          color: '#8b5cf6',
+          background: 'rgba(139,92,246,0.1)',
+          border: '1px solid rgba(139,92,246,0.25)',
           padding: '4px 12px', borderRadius: 99,
         }}>
           {results.length} clause{results.length !== 1 ? 's' : ''} analyzed
@@ -62,9 +62,9 @@ function ResultsList({ results }) {
 
       {/* ── Risk summary cards ── */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 22 }}>
-        <StatCard count={counts.HIGH}   label="High Risk"   color="#ef4444" bg="rgba(239,68,68,0.08)" />
-        <StatCard count={counts.MEDIUM} label="Med Risk"    color="#f59e0b" bg="rgba(245,158,11,0.08)" />
-        <StatCard count={counts.LOW}    label="Low Risk"    color="#22c55e" bg="rgba(34,197,94,0.08)" />
+        <StatCard count={counts.HIGH}   label="High Risk"   color="#ff3366" bg="rgba(255,51,102,0.08)" />
+        <StatCard count={counts.MEDIUM} label="Med Risk"    color="#ffb833" bg="rgba(255,184,51,0.08)" />
+        <StatCard count={counts.LOW}    label="Low Risk"    color="#10b981" bg="rgba(16,185,129,0.08)" />
       </div>
 
       {/* ── Risk meter bar ── */}
@@ -79,20 +79,20 @@ function ResultsList({ results }) {
           }}>
             {counts.HIGH > 0 && (
               <div style={{
-                flex: counts.HIGH, background: '#ef4444',
+                flex: counts.HIGH, background: '#ff3366',
                 borderRadius: '99px 0 0 99px',
                 transition: 'flex 0.4s ease',
               }} />
             )}
             {counts.MEDIUM > 0 && (
               <div style={{
-                flex: counts.MEDIUM, background: '#f59e0b',
+                flex: counts.MEDIUM, background: '#ffb833',
                 transition: 'flex 0.4s ease',
               }} />
             )}
             {counts.LOW > 0 && (
               <div style={{
-                flex: counts.LOW, background: '#22c55e',
+                flex: counts.LOW, background: '#10b981',
                 borderRadius: '0 99px 99px 0',
                 transition: 'flex 0.4s ease',
               }} />
@@ -100,7 +100,7 @@ function ResultsList({ results }) {
           </div>
           <div style={{
             display: 'flex', justifyContent: 'space-between',
-            marginTop: 5, fontSize: 10, color: '#475569',
+            marginTop: 5, fontSize: 10, color: '#5a4a9c',
           }}>
             <span>Overall risk distribution</span>
             <span>
@@ -121,7 +121,7 @@ function ResultsList({ results }) {
       }}>
         {FILTER_TABS.map((tab) => {
           const active = filter === tab;
-          const tabColor = tab === 'HIGH' ? '#ef4444' : tab === 'MEDIUM' ? '#f59e0b' : tab === 'LOW' ? '#22c55e' : '#4f72ff';
+          const tabColor = tab === 'HIGH' ? '#ff3366' : tab === 'MEDIUM' ? '#ffb833' : tab === 'LOW' ? '#10b981' : '#8b5cf6';
           return (
             <button
               key={tab}
@@ -131,7 +131,7 @@ function ResultsList({ results }) {
                 borderRadius: 99,
                 border: `1px solid ${active ? tabColor : 'rgba(255,255,255,0.08)'}`,
                 background: active ? `${tabColor}18` : 'transparent',
-                color: active ? tabColor : '#94a3b8',
+                color: active ? tabColor : '#b1a4f0',
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -141,13 +141,13 @@ function ResultsList({ results }) {
               onMouseOver={(e) => {
                 if (!active) {
                     e.target.style.background = 'rgba(255,255,255,0.05)';
-                    e.target.style.color = '#e2e8f0';
+                    e.target.style.color = '#f3f0ff';
                 }
               }}
               onMouseOut={(e) => {
                 if (!active) {
                     e.target.style.background = 'transparent';
-                    e.target.style.color = '#94a3b8';
+                    e.target.style.color = '#b1a4f0';
                 }
               }}
             >
@@ -172,7 +172,7 @@ function ResultsList({ results }) {
           <div style={{
             textAlign: 'center',
             padding: '40px 0',
-            color: '#475569',
+            color: '#5a4a9c',
             fontSize: 14,
           }}>
             No {filter.toLowerCase()} risk clauses found.

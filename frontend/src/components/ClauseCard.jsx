@@ -2,16 +2,16 @@ import React, { useState } from 'react';
 
 function riskStyle(level) {
   switch (level) {
-    case 'HIGH':   return { badge: 'badge badge-high',   border: '#ef4444', dot: '#ef4444', label: '🔴 HIGH' };
-    case 'MEDIUM': return { badge: 'badge badge-medium', border: '#f59e0b', dot: '#f59e0b', label: '🟡 MEDIUM' };
-    case 'LOW':    return { badge: 'badge badge-low',    border: '#22c55e', dot: '#22c55e', label: '🟢 LOW' };
-    default:       return { badge: 'badge badge-unknown',border: '#64748b', dot: '#64748b', label: '⚪ UNKNOWN' };
+    case 'HIGH':   return { badge: 'badge badge-high',   border: '#ff3366', dot: '#ff3366', label: '🔴 HIGH' };
+    case 'MEDIUM': return { badge: 'badge badge-medium', border: '#ffb833', dot: '#ffb833', label: '🟡 MEDIUM' };
+    case 'LOW':    return { badge: 'badge badge-low',    border: '#10b981', dot: '#10b981', label: '🟢 LOW' };
+    default:       return { badge: 'badge badge-unknown',border: '#7b6aae', dot: '#7b6aae', label: '⚪ UNKNOWN' };
   }
 }
 
 function ScoreBar({ score }) {
   const pct = Math.round(score * 100);
-  const color = score >= 0.85 ? '#ef4444' : score >= 0.70 ? '#f59e0b' : '#22c55e';
+  const color = score >= 0.85 ? '#ff3366' : score >= 0.70 ? '#ffb833' : '#10b981';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
       <div style={{
@@ -26,7 +26,7 @@ function ScoreBar({ score }) {
           transition: 'width 0.6s ease',
         }} />
       </div>
-      <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: "'JetBrains Mono', monospace", minWidth: 32 }}>
+      <span style={{ fontSize: 11, color: '#b1a4f0', fontFamily: "'JetBrains Mono', monospace", minWidth: 32 }}>
         {pct}%
       </span>
     </div>
@@ -46,7 +46,7 @@ function ClauseCard({ result, index }) {
         borderRadius: 12,
         border: `1px solid rgba(255,255,255,0.06)`,
         borderLeft: `3px solid ${s.border}`,
-        background: 'rgba(26,34,54,0.7)',
+        background: 'rgba(17,12,44,0.7)',
         marginBottom: 12,
         overflow: 'hidden',
         transition: 'box-shadow 0.2s',
@@ -67,7 +67,7 @@ function ClauseCard({ result, index }) {
           <span className={s.badge}>{s.label} RISK</span>
           <span style={{
             fontSize: 11,
-            color: '#475569',
+            color: '#5a4a9c',
             fontFamily: "'JetBrains Mono', monospace",
           }}>
             CLAUSE #{String(index + 1).padStart(2, '0')}
@@ -83,22 +83,22 @@ function ClauseCard({ result, index }) {
           marginBottom: 12,
         }}>
           <p style={{
-            color: '#cbd5e1',
+            color: '#d4cfff',
             fontSize: 13,
             lineHeight: 1.65,
             fontFamily: 'Inter, sans-serif',
           }}>
-            {clause.length > 400 ? clause.slice(0, 400) + '…' : clause}
+            {clause}
           </p>
         </div>
 
         {/* Explanation */}
         <div>
-          <p style={{ fontSize: 11, fontWeight: 600, color: '#475569',
+          <p style={{ fontSize: 11, fontWeight: 600, color: '#5a4a9c',
             textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>
             Risk Analysis
           </p>
-          <p style={{ color: '#94a3b8', fontSize: 13, lineHeight: 1.65 }}>
+          <p style={{ color: '#b1a4f0', fontSize: 13, lineHeight: 1.65 }}>
             {explanation || 'No further details available.'}
           </p>
         </div>
@@ -115,10 +115,10 @@ function ClauseCard({ result, index }) {
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '10px 20px',
-              background: 'rgba(79,114,255,0.06)',
+              background: 'rgba(139,92,246,0.06)',
               border: 'none',
               borderTop: '1px solid rgba(255,255,255,0.05)',
-              color: '#7c9dff',
+              color: '#a78bfa',
               cursor: 'pointer',
               fontSize: 12,
               fontWeight: 600,
@@ -133,7 +133,7 @@ function ClauseCard({ result, index }) {
               width="14" height="14" viewBox="0 0 24 24" fill="none"
               style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
             >
-              <path d="m6 9 6 6 6-6" stroke="#7c9dff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="m6 9 6 6 6-6" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
 
@@ -174,14 +174,14 @@ function ClauseCard({ result, index }) {
                           letterSpacing: '0.06em',
                         }}>{sc.severity}</span>
                         <span style={{
-                          fontSize: 10, color: '#475569',
+                          fontSize: 10, color: '#5a4a9c',
                           fontFamily: "'JetBrains Mono', monospace",
                           background: 'rgba(255,255,255,0.05)',
                           padding: '1px 6px', borderRadius: 4,
                         }}>{sc.clause_type}</span>
                         <ScoreBar score={sc.score} />
                       </div>
-                      <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>
+                      <p style={{ fontSize: 12, color: '#7b6aae', lineHeight: 1.5 }}>
                         {sc.text}
                       </p>
                     </div>

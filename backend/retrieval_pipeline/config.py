@@ -176,7 +176,7 @@ MIN_ANSWER_FOR_FALLBACK = int(os.getenv("MIN_ANSWER_FOR_FALLBACK", "10"))
 CHAT_MAX_QUESTION_CHARS = int(os.getenv("CHAT_MAX_QUESTION_CHARS", "1000"))
 """Maximum accepted user question length."""
 
-CHAT_MAX_ANSWER_CHARS = int(os.getenv("CHAT_MAX_ANSWER_CHARS", "500"))
+CHAT_MAX_ANSWER_CHARS = int(os.getenv("CHAT_MAX_ANSWER_CHARS", "2000"))
 """Maximum assistant answer length."""
 
 

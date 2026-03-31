@@ -92,7 +92,7 @@ def _extract_matches(retrieved_clauses: Any) -> List[Dict[str, Any]]:
         text = metadata.get("clause_text") or metadata.get("text") or ""
         normalized.append(
             {
-                "text": text[:200] + "..." if len(text) > 200 else text,
+                "text": text,
                 "severity": str(metadata.get("severity", "unknown")).upper(),
                 "clause_type": str(metadata.get("clause_type", "unknown")),
                 "score": round(score, 4),

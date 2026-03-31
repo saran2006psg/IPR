@@ -110,7 +110,7 @@ def _get_top_relevant_clauses(
 def _run_roberta_qa(
     question: str,
     context: str,
-    max_answer_length: int = 100,
+    max_answer_length: int = 500,
 ) -> Dict[str, Any]:
     """Run RoBERTa QA model on question + context."""
     tokenizer, model, device = _load_roberta_model()
@@ -156,7 +156,7 @@ def _run_roberta_qa(
         
         # Cap answer length
         if len(answer) > max_answer_length:
-            answer = answer[:max_answer_length].rsplit(" ", 1)[0] + "..."
+            answer = answer[:max_answer_length]
         
         return {
             "answer": answer,
@@ -229,7 +229,7 @@ def answer_contract_question(
                     "clause_index": i,
                     "risk_level": a.get("risk_level", "LOW"),
                     "relevance_score": 1.0,
-                    "snippet": a.get("clause_text", "")[:200] + "..."
+                    "snippet": a.get("clause_text", "")
                 }
                 for i, a in enumerate(analyses[:5])
             ],
@@ -280,10 +280,10 @@ def answer_contract_question(
             if sim_text:
                 context_parts.append(sim_text[:300])
         
-        context = " ".join(context_parts)[:2000]
+        context = " ".join(context_parts)
         
         # Run QA
-        result = _run_roberta_qa(question, context)
+        result = _run_roberta_qa(question, context, max_answer_length=CHAT_MAX_ANSWER_CHARS)
         confidence = result.get("confidence", 0.0)
         answer = result.get("answer", "")
         
@@ -298,7 +298,7 @@ def answer_contract_question(
     if not best_answer or best_confidence < CHAT_MIN_CONFIDENCE:
         top_clause = relevant[0][1] if relevant else None
         if top_clause:
-            best_answer = f"Relevant clause found: {top_clause.get('clause_text', '')[:200]}..."
+            best_answer = f"Relevant clause found: {top_clause.get('clause_text', '')}"
             best_confidence = 0.5
             best_clause_idx = relevant[0][0]
             best_clause_info = top_clause
@@ -309,17 +309,13 @@ def answer_contract_question(
                 "citations": [],
             }
     
-    # Cap answer length
-    if len(best_answer) > CHAT_MAX_ANSWER_CHARS:
-        best_answer = best_answer[:CHAT_MAX_ANSWER_CHARS].rsplit(" ", 1)[0] + "..."
-    
     # Build citations
     citations = [
         {
             "clause_index": idx,
             "risk_level": clause.get("risk_level", "LOW"),
             "relevance_score": 1.0,
-            "snippet": clause.get("clause_text", "")[:220] + ("..." if len(clause.get("clause_text", "")) > 220 else ""),
+            "snippet": clause.get("clause_text", ""),
         }
         for idx, clause in relevant
     ]
