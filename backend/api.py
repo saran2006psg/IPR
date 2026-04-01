@@ -11,7 +11,7 @@ import tempfile
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -27,8 +27,18 @@ from chat_session_store import (
     touch_session,
 )
 from retrieval_pipeline import analyze_contract
+from retrieval_pipeline.agreement_profiles import (
+    get_agreement_type_user_type_map,
+    validate_agreement_selection,
+)
 from retrieval_pipeline.pdf_extractor import validate_pdf
-from retrieval_pipeline.config import CHAT_MAX_QUESTION_CHARS, CHAT_SESSION_TTL_SEC, setup_logging
+from retrieval_pipeline.config import (
+    CHAT_MAX_QUESTION_CHARS,
+    CHAT_SESSION_TTL_SEC,
+    DEFAULT_CONTEXT_AGREEMENT_TYPE,
+    DEFAULT_CONTEXT_USER_TYPE,
+    setup_logging,
+)
 from retrieval_pipeline.llm_reasoner import get_model_service_status, summarize_contract_analysis
 
 # Configure logging
@@ -60,6 +70,9 @@ class SimilarClause(BaseModel):
     score: float
     severity: str
     clause_type: str
+    match_id: Optional[str] = None
+    rule_id: Optional[str] = None
+    rule_name: Optional[str] = None
 
 
 class ClauseResult(BaseModel):
@@ -74,6 +87,8 @@ class AnalysisResponse(BaseModel):
     """Complete contract analysis response."""
     results: List[ClauseResult]
     session_id: Optional[str] = None
+    agreement_type: Optional[str] = None
+    user_type: Optional[str] = None
 
 
 class SummaryResponse(BaseModel):
@@ -88,7 +103,20 @@ class HealthResponse(BaseModel):
     model_server: str
     chatbot_db: str
     model_server_url: str
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
     timestamp: str
+
+
+class AgreementOption(BaseModel):
+    """Allowed agreement type and associated user types."""
+    agreement_type: str
+    user_types: List[str]
+
+
+class AgreementOptionsResponse(BaseModel):
+    """Agreement metadata used by frontend form selectors."""
+    options: List[AgreementOption]
 
 
 class ChatUploadResponse(BaseModel):
@@ -97,12 +125,17 @@ class ChatUploadResponse(BaseModel):
     clause_count: int
     high_risk_count: int
     summary: str
+    agreement_type: str
+    user_type: str
 
 
 class ChatAskRequest(BaseModel):
     """Chat question payload."""
     session_id: str
     question: str
+    selected_clause_index: Optional[int] = None
+    agreement_type: Optional[str] = None
+    user_type: Optional[str] = None
 
 
 class Citation(BaseModel):
@@ -130,6 +163,8 @@ class ChatAskResponse(BaseModel):
     fallback_used: bool
     citations: List[Citation]
     history: List[ChatMessage]
+    agreement_type: Optional[str] = None
+    user_type: Optional[str] = None
 
 
 # Health check endpoint
@@ -155,13 +190,29 @@ async def health_check():
         model_server=model_status,
         chatbot_db="ready" if db_ready else "error",
         model_server_url=str(model_info.get("url", "")),
+        llm_provider=str(model_info.get("provider", "groq")),
+        llm_model=str(model_info.get("model", "")),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
 
+@app.get("/metadata/agreement-options", response_model=AgreementOptionsResponse)
+async def get_agreement_options() -> AgreementOptionsResponse:
+    """Return allowed agreement types and role options for UI selection."""
+    options = [
+        AgreementOption(agreement_type=agreement_type, user_types=user_types)
+        for agreement_type, user_types in get_agreement_type_user_type_map().items()
+    ]
+    return AgreementOptionsResponse(options=options)
+
+
 # Main analysis endpoint
 @app.post("/analyze", response_model=AnalysisResponse)
-async def analyze_contract_endpoint(file: UploadFile = File(...)):
+async def analyze_contract_endpoint(
+    file: UploadFile = File(...),
+    agreement_type: str = Form(DEFAULT_CONTEXT_AGREEMENT_TYPE),
+    user_type: str = Form(DEFAULT_CONTEXT_USER_TYPE),
+):
     """
     Analyze a contract PDF for risky clauses.
     
@@ -206,6 +257,11 @@ async def analyze_contract_endpoint(file: UploadFile = File(...)):
             detail="Only PDF files are accepted. Please upload a .pdf file."
         )
     
+    try:
+        agreement_type, user_type = validate_agreement_selection(agreement_type, user_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     # Create a temporary file to store the upload
     temp_file = None
     temp_path = None
@@ -237,7 +293,12 @@ async def analyze_contract_endpoint(file: UploadFile = File(...)):
         
         # Run analysis pipeline
         logger.info("Starting contract analysis pipeline...")
-        analyses = analyze_contract(temp_path, verbose=False)
+        analyses = analyze_contract(
+            temp_path,
+            verbose=False,
+            agreement_type=agreement_type,
+            user_type=user_type,
+        )
         logger.info(f"Analysis complete: {len(analyses)} clauses analyzed")
         
         # Transform results to match frontend spec
@@ -252,6 +313,9 @@ async def analyze_contract_endpoint(file: UploadFile = File(...)):
                         score=sc.get("score", 0.0),
                         severity=sc.get("severity", "unknown"),
                         clause_type=sc.get("clause_type", "unknown"),
+                        match_id=sc.get("match_id") or None,
+                        rule_id=sc.get("rule_id") or None,
+                        rule_name=sc.get("rule_name") or None,
                     )
                     for sc in analysis.get("similar_clauses", [])
                 ],
@@ -262,7 +326,12 @@ async def analyze_contract_endpoint(file: UploadFile = File(...)):
         session_summary = build_summary(analyses)
         session_id = create_session(file.filename or "uploaded_contract.pdf", analyses, session_summary)
         
-        return AnalysisResponse(results=results, session_id=session_id)
+        return AnalysisResponse(
+            results=results,
+            session_id=session_id,
+            agreement_type=agreement_type,
+            user_type=user_type,
+        )
         
     except HTTPException:
         # Re-raise HTTP exceptions (validation errors)
@@ -288,7 +357,11 @@ async def analyze_contract_endpoint(file: UploadFile = File(...)):
 
 # Summary endpoint
 @app.post("/summarize", response_model=SummaryResponse)
-async def summarize_contract_endpoint(file: UploadFile = File(...)):
+async def summarize_contract_endpoint(
+    file: UploadFile = File(...),
+    agreement_type: str = Form(DEFAULT_CONTEXT_AGREEMENT_TYPE),
+    user_type: str = Form(DEFAULT_CONTEXT_USER_TYPE),
+):
     """
     Generate a summary of contract analysis results.
     
@@ -326,6 +399,11 @@ async def summarize_contract_endpoint(file: UploadFile = File(...)):
             detail="Only PDF files are accepted. Please upload a .pdf file."
         )
     
+    try:
+        agreement_type, user_type = validate_agreement_selection(agreement_type, user_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     # Create a temporary file to store the upload
     temp_file = None
     temp_path = None
@@ -357,7 +435,12 @@ async def summarize_contract_endpoint(file: UploadFile = File(...)):
         
         # Run analysis pipeline
         logger.info("Starting contract analysis pipeline for summarization...")
-        analyses = analyze_contract(temp_path, verbose=False)
+        analyses = analyze_contract(
+            temp_path,
+            verbose=False,
+            agreement_type=agreement_type,
+            user_type=user_type,
+        )
         logger.info(f"Analysis complete: {len(analyses)} clauses analyzed")
         
         # Generate summary
@@ -390,10 +473,19 @@ async def summarize_contract_endpoint(file: UploadFile = File(...)):
 
 
 @app.post("/chat/upload", response_model=ChatUploadResponse)
-async def upload_for_chat_endpoint(file: UploadFile = File(...)):
+async def upload_for_chat_endpoint(
+    file: UploadFile = File(...),
+    agreement_type: str = Form(DEFAULT_CONTEXT_AGREEMENT_TYPE),
+    user_type: str = Form(DEFAULT_CONTEXT_USER_TYPE),
+):
     """Upload a PDF, analyze it, and create a persistent chatbot session."""
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+
+    try:
+        agreement_type, user_type = validate_agreement_selection(agreement_type, user_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     temp_path = None
     try:
@@ -404,7 +496,12 @@ async def upload_for_chat_endpoint(file: UploadFile = File(...)):
         tmp.close()
 
         validate_pdf(temp_path)
-        analyses = analyze_contract(temp_path, verbose=False)
+        analyses = analyze_contract(
+            temp_path,
+            verbose=False,
+            agreement_type=agreement_type,
+            user_type=user_type,
+        )
         summary = build_summary(analyses)
         session_id = create_session(file.filename or "uploaded_contract.pdf", analyses, summary)
 
@@ -414,6 +511,8 @@ async def upload_for_chat_endpoint(file: UploadFile = File(...)):
             clause_count=len(analyses),
             high_risk_count=high_risk_count,
             summary=summary,
+            agreement_type=agreement_type,
+            user_type=user_type,
         )
     except HTTPException:
         raise
@@ -442,14 +541,35 @@ async def ask_chat_question(payload: ChatAskRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found or expired.")
 
+    analyses = session.get("analyses", []) or []
+    inferred_agreement_type = payload.agreement_type or (
+        str(analyses[0].get("agreement_type", DEFAULT_CONTEXT_AGREEMENT_TYPE))
+        if analyses else DEFAULT_CONTEXT_AGREEMENT_TYPE
+    )
+    inferred_user_type = payload.user_type or (
+        str(analyses[0].get("user_type", DEFAULT_CONTEXT_USER_TYPE))
+        if analyses else DEFAULT_CONTEXT_USER_TYPE
+    )
+
+    try:
+        agreement_type, user_type = validate_agreement_selection(inferred_agreement_type, inferred_user_type)
+    except ValueError as exc:
+        if payload.agreement_type or payload.user_type:
+            raise HTTPException(status_code=400, detail=str(exc))
+        agreement_type = DEFAULT_CONTEXT_AGREEMENT_TYPE
+        user_type = DEFAULT_CONTEXT_USER_TYPE
+
     history = get_messages(payload.session_id, limit=30)
 
     add_message(payload.session_id, "user", question)
     answer_payload = answer_contract_question(
         question=question,
-        analyses=session["analyses"],
+        analyses=analyses,
         summary=session["summary"],
         chat_history=history,
+        selected_clause_index=payload.selected_clause_index,
+        agreement_type=agreement_type,
+        user_type=user_type,
     )
 
     add_message(
@@ -479,6 +599,8 @@ async def ask_chat_question(payload: ChatAskRequest):
             )
             for m in fresh_history
         ],
+        agreement_type=agreement_type,
+        user_type=user_type,
     )
 
 

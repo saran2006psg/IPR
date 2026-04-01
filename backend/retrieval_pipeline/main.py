@@ -94,7 +94,12 @@ def print_summary(summary: Dict[str, Any]):
     print_separator("=")
 
 
-def analyze_contract(pdf_path: str, verbose: bool = False) -> List[Dict[str, Any]]:
+def analyze_contract(
+    pdf_path: str,
+    verbose: bool = False,
+    agreement_type: str = "Company Sales Agreement",
+    user_type: str = "Buyer",
+) -> List[Dict[str, Any]]:
     """
     Analyze a contract PDF and return risk analysis results.
     
@@ -108,6 +113,8 @@ def analyze_contract(pdf_path: str, verbose: bool = False) -> List[Dict[str, Any
     Args:
         pdf_path: Path to the contract PDF file
         verbose: Whether to print detailed progress information
+        agreement_type: Agreement template used for role-aware review
+        user_type: Reviewing user role within the agreement type
         
     Returns:
         List of risk analysis results, one per clause
@@ -184,7 +191,12 @@ def analyze_contract(pdf_path: str, verbose: bool = False) -> List[Dict[str, Any
         print(f"\n[5/5] 🎯 Analyzing risk levels...")
     
     try:
-        analyses = analyze_risk_batch(clauses, query_results)
+        analyses = analyze_risk_batch(
+            clauses,
+            query_results,
+            agreement_type=agreement_type,
+            user_type=user_type,
+        )
         logger.info(f"Completed risk analysis for {len(analyses)} clauses")
         if verbose:
             print(f"      ✓ Analyzed {len(analyses)} clauses")

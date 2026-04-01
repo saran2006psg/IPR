@@ -1,12 +1,4 @@
-"""
-LLM Reasoner — local RoBERTa QA-based risk analysis for Legal Contract Risk Analyzer.
-
-Pipeline:
-  1. Extract & filter Pinecone matches above similarity threshold.
-  2. Run RoBERTa QA against the clause for HIGH / MEDIUM / LOW indicator questions.
-  3. Build a human-readable explanation from whatever evidence was found.
-  4. Always return a non-empty explanation and a definitive risk level (HIGH/MEDIUM/LOW).
-"""
+"""LLM reasoner for role-aware contract risk analysis using Groq."""
 
 import logging
 import json
@@ -16,15 +8,18 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from .agreement_profiles import build_role_review_context
 from .config import (
-    MODEL_SERVER_DOWN_COOLDOWN_SEC,
-    MODEL_SERVER_BATCH_SIZE,
-    MODEL_SERVER_ENABLED,
-    MODEL_SERVER_MAX_RETRIES,
-    MODEL_SERVER_RETRY_BACKOFF_SEC,
-    MODEL_SERVER_TIMEOUT_SEC,
-    MODEL_SERVER_URL,
-    QA_BATCH_MODE_ENABLED,
+    DEFAULT_CONTEXT_AGREEMENT_TYPE,
+    DEFAULT_CONTEXT_USER_TYPE,
+    GROQ_API_KEY,
+    GROQ_API_URL,
+    GROQ_DOWN_COOLDOWN_SEC,
+    GROQ_ENABLED,
+    GROQ_MAX_RETRIES,
+    GROQ_MODEL,
+    GROQ_RETRY_BACKOFF_SEC,
+    GROQ_TIMEOUT_SEC,
     REASONER_SIMILARITY_THRESHOLD,
     MIN_ANSWER_LENGTH,
     SUMMARY_MIN_CONFIDENCE,
@@ -88,14 +83,34 @@ def _extract_matches(retrieved_clauses: Any) -> List[Dict[str, Any]]:
         metadata = (
             match.get("metadata", {}) if isinstance(match, dict) else getattr(match, "metadata", {})
         )
+        if not isinstance(metadata, dict):
+            metadata = {}
 
         text = metadata.get("clause_text") or metadata.get("text") or ""
+        match_id = match.get("id", "") if isinstance(match, dict) else getattr(match, "id", "")
+        rule_id = (
+            metadata.get("rule_id")
+            or metadata.get("kb_id")
+            or metadata.get("source_id")
+            or metadata.get("clause_id")
+            or ""
+        )
+        rule_name = (
+            metadata.get("rule_name")
+            or metadata.get("title")
+            or metadata.get("name")
+            or metadata.get("clause_type")
+            or ""
+        )
         normalized.append(
             {
                 "text": text,
                 "severity": str(metadata.get("severity", "unknown")).upper(),
                 "clause_type": str(metadata.get("clause_type", "unknown")),
                 "score": round(score, 4),
+                "match_id": str(match_id or ""),
+                "rule_id": str(rule_id or ""),
+                "rule_name": str(rule_name or ""),
             }
         )
     return normalized
@@ -128,7 +143,7 @@ def _is_incomplete_answer(answer: str) -> bool:
     answer_lower = answer.lower().strip()
     
     # Reject if starts with conjunctions (likely middle of sentence)
-    if any(answer_lower.startswith(conj + " ") for conj in ["and", "or", "but", "the ", "a "]):
+    if any(answer_lower.startswith(conj + " ") for conj in ["and", "or", "but"]):
         return True
     
     # Reject if ends with open paren or comma (incomplete thought)
@@ -194,7 +209,7 @@ def _normalize_answer(answer: str) -> str:
     answer = answer.strip()
     
     # Remove leading conjunctions/articles that indicate truncation
-    leading_prefixes = ["and ", "or ", "but ", "the ", "a "]
+    leading_prefixes = ["and ", "or ", "but "]
     while any(answer.lower().startswith(p) for p in leading_prefixes):
         for prefix in leading_prefixes:
             if answer.lower().startswith(prefix):
@@ -208,318 +223,431 @@ def _normalize_answer(answer: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# QA inference
+# QA inference via Groq
 # ---------------------------------------------------------------------------
 
-def _query_model_server(question: str, context: str) -> Optional[Dict[str, Any]]:
-    """Call external QA model server and return answer payload."""
+def _extract_json_block(raw_text: str) -> Optional[Dict[str, Any]]:
+    """Extract and parse a JSON object from model output text."""
+    if not raw_text:
+        return None
+
+    text = raw_text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"```$", "", text).strip()
+
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except ValueError:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or start >= end:
+        return None
+
+    try:
+        parsed = json.loads(text[start:end + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except ValueError:
+        return None
+
+
+def _call_groq_chat(
+    messages: List[Dict[str, str]],
+    temperature: float = 0.1,
+    max_tokens: int = 400,
+) -> Optional[str]:
+    """Call Groq chat completions and return assistant message content."""
     global _model_service_unavailable, _model_service_down_until
 
-    if not MODEL_SERVER_ENABLED:
+    if not GROQ_ENABLED or not GROQ_API_KEY:
         _model_service_unavailable = True
         return None
 
     if _model_service_unavailable and time.time() < _model_service_down_until:
         return None
 
-    payload = json.dumps({"question": question, "context": context}).encode("utf-8")
+    payload = json.dumps(
+        {
+            "model": GROQ_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+    ).encode("utf-8")
+
     request = urllib.request.Request(
-        MODEL_SERVER_URL,
+        GROQ_API_URL,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "python-requests/2.32.3",
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+        },
         method="POST",
     )
 
-    for attempt in range(MODEL_SERVER_MAX_RETRIES + 1):
+    for attempt in range(GROQ_MAX_RETRIES + 1):
         try:
-            with urllib.request.urlopen(request, timeout=MODEL_SERVER_TIMEOUT_SEC) as response:
+            with urllib.request.urlopen(request, timeout=GROQ_TIMEOUT_SEC) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
 
+            choices = response_data.get("choices", [])
+            if not choices:
+                return None
+
+            content = str(choices[0].get("message", {}).get("content", "")).strip()
             _model_service_unavailable = False
             _model_service_down_until = 0.0
+            return content or None
 
-            answer = str(response_data.get("answer", "")).strip()
-            confidence = float(response_data.get("confidence", -999.0))
+        except urllib.error.HTTPError as exc:
+            error_body = ""
+            try:
+                error_body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = ""
 
-            # PHASE 1: Stricter validation with quality scoring
-            if len(answer) < MIN_ANSWER_LENGTH:  # Changed from < 2
-                return None
-            if confidence < -1.0:  # Changed from < -5.0 (much stricter)
-                return None
-            
-            quality_score = _score_answer_quality(answer, confidence)
-            if quality_score < 0.3:  # Reject low-quality answers even if confidence threshold passed
-                logger.debug(f"Answer rejected due to low quality score {quality_score}: {answer[:50]}")
-                return None
-            
-            answer = _normalize_answer(answer)  # Clean up fragments
-            logger.debug(f"PHASE 1: Accepted answer (conf={confidence:.2f}, quality={quality_score:.2f}): {answer[:80]}")
-            return {"answer": answer, "confidence": round(confidence, 2), "quality": quality_score}
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
-            if attempt == MODEL_SERVER_MAX_RETRIES:
+            if attempt == GROQ_MAX_RETRIES:
                 _model_service_unavailable = True
-                _model_service_down_until = time.time() + MODEL_SERVER_DOWN_COOLDOWN_SEC
-                logger.warning("Model service call failed after retries: %s", exc)
+                _model_service_down_until = time.time() + GROQ_DOWN_COOLDOWN_SEC
+                if error_body:
+                    logger.warning(
+                        "Groq call failed after retries: HTTP %s body=%s",
+                        exc.code,
+                        error_body[:500],
+                    )
+                else:
+                    logger.warning("Groq call failed after retries: %s", exc)
                 return None
-            sleep_time = MODEL_SERVER_RETRY_BACKOFF_SEC * (2 ** attempt)
+
+            sleep_time = GROQ_RETRY_BACKOFF_SEC * (2 ** attempt)
             time.sleep(sleep_time)
+
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            if attempt == GROQ_MAX_RETRIES:
+                _model_service_unavailable = True
+                _model_service_down_until = time.time() + GROQ_DOWN_COOLDOWN_SEC
+                logger.warning("Groq call failed after retries: %s", exc)
+                return None
+            sleep_time = GROQ_RETRY_BACKOFF_SEC * (2 ** attempt)
+            time.sleep(sleep_time)
+
     return None
 
 
-def _query_model_server_batch(pairs: List[Dict[str, str]]) -> List[Optional[Dict[str, Any]]]:
-    """Call external QA batch endpoint and return aligned answer payloads."""
-    global _model_service_unavailable, _model_service_down_until
+def _query_model_server(
+    question: str,
+    context: str,
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Run context-grounded QA through Groq and return normalized answer payload."""
+    role_context = build_role_review_context(
+        agreement_type or DEFAULT_CONTEXT_AGREEMENT_TYPE,
+        user_type or DEFAULT_CONTEXT_USER_TYPE,
+    )
 
-    if not MODEL_SERVER_ENABLED:
-        _model_service_unavailable = True
-        return [None for _ in pairs]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a legal contract assistant. Answer using only the provided context. "
+                "If the context is insufficient, state that clearly in one sentence."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{role_context}\n\n"
+                f"Question: {question}\n\n"
+                f"Context:\n{context}"
+            ),
+        },
+    ]
 
-    if _model_service_unavailable and time.time() < _model_service_down_until:
-        return [None for _ in pairs]
+    answer = _call_groq_chat(messages, temperature=0.05, max_tokens=320)
+    if not answer:
+        return None
 
-    if not pairs:
-        return []
+    answer = re.sub(r"\s+", " ", answer).strip()
+    if len(answer) < MIN_ANSWER_LENGTH:
+        return None
 
-    batch_url = MODEL_SERVER_URL.rsplit("/", 1)[0] + "/qa_batch"
+    confidence = 1.2
+    quality_score = _score_answer_quality(answer, confidence)
+    if quality_score < 0.25:
+        return None
+
+    return {
+        "answer": answer,
+        "confidence": round(confidence, 2),
+        "quality": quality_score,
+    }
+
+
+def _query_model_server_batch(
+    pairs: List[Dict[str, str]],
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
+) -> List[Optional[Dict[str, Any]]]:
+    """Compatibility helper that runs Groq QA calls sequentially for each pair."""
     results: List[Optional[Dict[str, Any]]] = []
-    request_batch_size = max(1, MODEL_SERVER_BATCH_SIZE)
-
-    for start in range(0, len(pairs), request_batch_size):
-        chunk = pairs[start:start + request_batch_size]
-        payload = json.dumps({"requests": chunk}).encode("utf-8")
-        request = urllib.request.Request(
-            batch_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+    for pair in pairs:
+        results.append(
+            _query_model_server(
+                pair.get("question", ""),
+                pair.get("context", ""),
+                agreement_type=agreement_type,
+                user_type=user_type,
+            )
         )
-
-        chunk_result: Optional[List[Optional[Dict[str, Any]]]] = None
-        for attempt in range(MODEL_SERVER_MAX_RETRIES + 1):
-            try:
-                with urllib.request.urlopen(request, timeout=MODEL_SERVER_TIMEOUT_SEC) as response:
-                    response_data = json.loads(response.read().decode("utf-8"))
-
-                responses = response_data.get("responses", [])
-                parsed: List[Optional[Dict[str, Any]]] = []
-                for item in responses:
-                    answer = str(item.get("answer", "")).strip()
-                    confidence = float(item.get("confidence", -999.0))
-                    
-                    # PHASE 1: Stricter validation with quality scoring
-                    if len(answer) < MIN_ANSWER_LENGTH or confidence < -1.0:
-                        parsed.append(None)
-                    else:
-                        quality_score = _score_answer_quality(answer, confidence)
-                        if quality_score < 0.3:
-                            parsed.append(None)
-                        else:
-                            answer = _normalize_answer(answer)
-                            parsed.append({"answer": answer, "confidence": round(confidence, 2), "quality": quality_score})
-
-                while len(parsed) < len(chunk):
-                    parsed.append(None)
-                chunk_result = parsed[:len(chunk)]
-                _model_service_unavailable = False
-                _model_service_down_until = 0.0
-                break
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
-                if attempt == MODEL_SERVER_MAX_RETRIES:
-                    logger.warning("Model service batch call failed after retries: %s", exc)
-                    _model_service_unavailable = True
-                    _model_service_down_until = time.time() + MODEL_SERVER_DOWN_COOLDOWN_SEC
-                    chunk_result = [None for _ in chunk]
-                    results.extend(chunk_result)
-                    remaining = len(pairs) - (start + len(chunk))
-                    if remaining > 0:
-                        results.extend([None for _ in range(remaining)])
-                    return results
-                else:
-                    sleep_time = MODEL_SERVER_RETRY_BACKOFF_SEC * (2 ** attempt)
-                    time.sleep(sleep_time)
-
-        results.extend(chunk_result or [None for _ in chunk])
-
     return results
 
-def _find_answer(question: str, context: str) -> Optional[Dict[str, Any]]:
-    """Run one QA inference against the external model service."""
-    return _query_model_server(question, context)
+
+def _find_answer(
+    question: str,
+    context: str,
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Run one QA inference against Groq."""
+    return _query_model_server(
+        question,
+        context,
+        agreement_type=agreement_type,
+        user_type=user_type,
+    )
+
+
+def query_model_service(
+    question: str,
+    context: str,
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Public helper used by other modules to run one QA inference call."""
+    return _query_model_server(
+        question,
+        context,
+        agreement_type=agreement_type,
+        user_type=user_type,
+    )
+
+
+def _summarize_similar_clauses(similar_clauses: List[Dict[str, Any]], max_items: int = 3) -> str:
+    """Build compact similar-clause context for role-aware prompting."""
+    lines: List[str] = []
+    for idx, clause in enumerate(similar_clauses[:max_items], start=1):
+        text = re.sub(r"\s+", " ", str(clause.get("text", ""))).strip()
+        if len(text) > 220:
+            text = text[:220].rstrip() + "..."
+        lines.append(
+            f"{idx}. severity={clause.get('severity', 'UNKNOWN')}, "
+            f"type={clause.get('clause_type', 'unknown')}, "
+            f"similarity={clause.get('score', 0.0)} -> {text}"
+        )
+    return "\n".join(lines) if lines else "No close rule matches above threshold."
+
+
+def _analyze_clause_with_groq(
+    clause_text: str,
+    similar_clauses: List[Dict[str, Any]],
+    agreement_type: str,
+    user_type: str,
+) -> Optional[Dict[str, Any]]:
+    """Classify clause risk from the selected user-role perspective."""
+    role_context = build_role_review_context(agreement_type, user_type)
+    similar_context = _summarize_similar_clauses(similar_clauses)
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a legal risk reviewer. Return STRICT JSON only with keys: "
+                "risk_level, explanation, indicators, confidence. "
+                "risk_level must be one of HIGH, MEDIUM, LOW."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{role_context}\n\n"
+                f"Contract clause to review:\n{clause_text}\n\n"
+                f"Relevant knowledge-base matches:\n{similar_context}\n\n"
+                "Rate risk for this selected user role. "
+                "Keep explanation under 80 words and explicitly mention why it is risky for this role."
+            ),
+        },
+    ]
+
+    raw = _call_groq_chat(messages, temperature=0.1, max_tokens=320)
+    parsed = _extract_json_block(raw or "")
+    if not parsed:
+        return None
+
+    risk_level = str(parsed.get("risk_level", "UNKNOWN")).upper()
+    if risk_level not in {"HIGH", "MEDIUM", "LOW"}:
+        return None
+
+    explanation = str(parsed.get("explanation", "")).strip()
+    if not explanation:
+        return None
+
+    indicators_raw = parsed.get("indicators", [])
+    if isinstance(indicators_raw, list):
+        indicators = [str(item).strip() for item in indicators_raw if str(item).strip()]
+    else:
+        indicators = []
+
+    try:
+        confidence = float(parsed.get("confidence", 1.2))
+    except (TypeError, ValueError):
+        confidence = 1.2
+
+    quality_score = _score_answer_quality(explanation, confidence)
+    if quality_score < 0.25:
+        return None
+
+    return {
+        "risk_level": risk_level,
+        "explanation": explanation,
+        "indicators": indicators,
+        "confidence": round(confidence, 2),
+        "quality": quality_score,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Core analysis
 # ---------------------------------------------------------------------------
 
-def analyze_clause_with_llm(clause_text: str, retrieved_clauses: Any) -> Dict[str, Any]:
+def analyze_clause_with_llm(
+    clause_text: str,
+    retrieved_clauses: Any,
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Analyze a single clause and always return a meaningful risk assessment.
 
     Returns a dict with keys:
         clause_text, risk_level, explanation, similar_clauses
     """
+    selected_agreement_type = agreement_type or DEFAULT_CONTEXT_AGREEMENT_TYPE
+    selected_user_type = user_type or DEFAULT_CONTEXT_USER_TYPE
+
     all_matches = _extract_matches(retrieved_clauses)
     similar_clauses = _filter_matches(all_matches)
 
-    risk_level: str = "UNKNOWN"
-    highest_level_found: Optional[str] = None
-    found_indicators: List[str] = []
+    model_used = False
+    fallback_used = False
 
-    # --- Step 1: QA-based risk detection ---
-    for level in ["HIGH", "MEDIUM", "LOW"]:
-        for question in QUESTIONS[level]:
-            res = _find_answer(question, clause_text)
-            if res:
-                label = QUESTION_LABELS.get(question, question)
-                found_indicators.append(f"{label}")
-                if highest_level_found is None:
-                    highest_level_found = level
+    model_result = _analyze_clause_with_groq(
+        clause_text,
+        similar_clauses,
+        selected_agreement_type,
+        selected_user_type,
+    )
 
-    # --- Build explanation ---
-    if highest_level_found:
-        risk_level = highest_level_found
-        indicators_str = ", ".join(found_indicators[:3])  # max 3 indicators shown
-        explanation = f"This clause contains: {indicators_str}."
+    if model_result:
+        model_used = True
+        risk_level = model_result["risk_level"]
+        explanation = model_result["explanation"]
+        if model_result.get("indicators"):
+            indicators = ", ".join(model_result["indicators"][:3])
+            explanation = f"{explanation} Key signals: {indicators}."
 
-    # --- Step 2: Pinecone similarity fallback ---
     elif similar_clauses:
+        fallback_used = True
         top = similar_clauses[0]
         sev = top["severity"]
         risk_level = sev if sev in ("HIGH", "MEDIUM", "LOW") else "LOW"
         pct = round(top["score"] * 100, 1)
         if _model_service_unavailable:
             explanation = (
-                f"Model service unavailable; fallback applied. This clause is {pct}% similar "
-                f"to a known {risk_level} risk \"{top['clause_type']}\" clause in the knowledge base."
+                f"Groq service unavailable; fallback applied. For {selected_user_type} in "
+                f"{selected_agreement_type}, this clause is {pct}% similar to a known "
+                f"{risk_level} risk \"{top['clause_type']}\" clause in the knowledge base."
             )
         else:
             explanation = (
-                f"This clause is {pct}% similar to a known {risk_level} risk "
-                f"\"{top['clause_type']}\" clause in the knowledge base."
+                f"For {selected_user_type} in {selected_agreement_type}, this clause is {pct}% "
+                f"similar to a known {risk_level} risk \"{top['clause_type']}\" clause in the knowledge base."
             )
     else:
+        fallback_used = True
         risk_level = "LOW"
-        explanation = "No risk patterns detected. This clause appears to be standard boilerplate."
+        explanation = (
+            f"No role-specific risk patterns detected for {selected_user_type} under "
+            f"{selected_agreement_type}."
+        )
 
     return {
         "clause_text": clause_text,
         "risk_level": risk_level,
         "explanation": explanation,
+        "model_used": model_used,
+        "fallback_used": fallback_used,
         "similar_clauses": similar_clauses,
+        "agreement_type": selected_agreement_type,
+        "user_type": selected_user_type,
     }
 
 
 def analyze_clauses_with_llm_batch(
-    contract_clauses: List[str], query_results_list: List[Any]
+    contract_clauses: List[str],
+    query_results_list: List[Any],
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Analyze a batch of clauses and use QA batch mode when enabled."""
-    if not QA_BATCH_MODE_ENABLED:
-        return [
-            analyze_clause_with_llm(c, r)
-            for c, r in zip(contract_clauses, query_results_list)
-        ]
-
-    clause_data: List[Dict[str, Any]] = []
-    qa_pairs: List[Dict[str, str]] = []
-    qa_index_map: List[List[tuple[str, int]]] = []
-
-    for clause_text, retrieved in zip(contract_clauses, query_results_list):
-        all_matches = _extract_matches(retrieved)
-        similar_clauses = _filter_matches(all_matches)
-
-        indices_for_clause: List[tuple[str, int]] = []
-        for level in ["HIGH", "MEDIUM", "LOW"]:
-            for question in QUESTIONS[level]:
-                pair_index = len(qa_pairs)
-                qa_pairs.append({"question": question, "context": clause_text})
-                indices_for_clause.append((question, pair_index))
-
-        clause_data.append({
-            "clause_text": clause_text,
-            "similar_clauses": similar_clauses,
-        })
-        qa_index_map.append(indices_for_clause)
-
-    qa_results = _query_model_server_batch(qa_pairs)
-    analyses: List[Dict[str, Any]] = []
-
-    for idx, metadata in enumerate(clause_data):
-        clause_text = metadata["clause_text"]
-        similar_clauses = metadata["similar_clauses"]
-
-        highest_level_found: Optional[str] = None
-        found_indicators: List[str] = []
-
-        for question, result_index in qa_index_map[idx]:
-            res = qa_results[result_index] if result_index < len(qa_results) else None
-            if not res:
-                continue
-
-            label = QUESTION_LABELS.get(question, question)
-            found_indicators.append(label)
-
-            if highest_level_found is None:
-                if question in QUESTIONS["HIGH"]:
-                    highest_level_found = "HIGH"
-                elif question in QUESTIONS["MEDIUM"]:
-                    highest_level_found = "MEDIUM"
-                else:
-                    highest_level_found = "LOW"
-
-        if highest_level_found:
-            risk_level = highest_level_found
-            indicators_str = ", ".join(found_indicators[:3])
-            explanation = f"This clause contains: {indicators_str}."
-        elif similar_clauses:
-            top = similar_clauses[0]
-            sev = top["severity"]
-            risk_level = sev if sev in ("HIGH", "MEDIUM", "LOW") else "LOW"
-            pct = round(top["score"] * 100, 1)
-            if _model_service_unavailable:
-                explanation = (
-                    f"Model service unavailable; fallback applied. This clause is {pct}% similar "
-                    f"to a known {risk_level} risk \"{top['clause_type']}\" clause in the knowledge base."
-                )
-            else:
-                explanation = (
-                    f"This clause is {pct}% similar to a known {risk_level} risk "
-                    f"\"{top['clause_type']}\" clause in the knowledge base."
-                )
-        else:
-            risk_level = "LOW"
-            explanation = "No risk patterns detected. This clause appears to be standard boilerplate."
-
-        analyses.append(
-            {
-                "clause_text": clause_text,
-                "risk_level": risk_level,
-                "explanation": explanation,
-                "similar_clauses": similar_clauses,
-            }
+    """Analyze a batch of clauses with role-aware Groq reasoning."""
+    return [
+        analyze_clause_with_llm(
+            clause_text,
+            retrieved,
+            agreement_type=agreement_type,
+            user_type=user_type,
         )
-
-    return analyses
+        for clause_text, retrieved in zip(contract_clauses, query_results_list)
+    ]
 
 def get_model_service_status() -> Dict[str, Any]:
-    """Return model-service connectivity and configuration status."""
-    health_url = MODEL_SERVER_URL.rsplit("/", 1)[0] + "/health"
-    if not MODEL_SERVER_ENABLED:
-        return {"enabled": False, "status": "disabled", "url": health_url}
+    """Return Groq connectivity and configuration status."""
+    if not GROQ_ENABLED:
+        return {
+            "enabled": False,
+            "status": "disabled",
+            "url": GROQ_API_URL,
+            "provider": "groq",
+            "model": GROQ_MODEL,
+        }
 
-    request = urllib.request.Request(health_url, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=min(2.0, MODEL_SERVER_TIMEOUT_SEC)) as response:
-            response_data = json.loads(response.read().decode("utf-8"))
-        status = str(response_data.get("status", "unknown"))
-        normalized = "ready" if status == "ok" else status
-        return {"enabled": True, "status": normalized, "url": health_url}
-    except Exception:
-        return {"enabled": True, "status": "offline", "url": health_url}
+    if not GROQ_API_KEY:
+        return {
+            "enabled": False,
+            "status": "missing-api-key",
+            "url": GROQ_API_URL,
+            "provider": "groq",
+            "model": GROQ_MODEL,
+        }
+
+    degraded = _model_service_unavailable and time.time() < _model_service_down_until
+    return {
+        "enabled": True,
+        "status": "degraded" if degraded else "ready",
+        "url": GROQ_API_URL,
+        "provider": "groq",
+        "model": GROQ_MODEL,
+    }
 
 
 def summarize_contract_analysis(analyses: List[Dict[str, Any]]) -> str:
     """
-    Generate a summary of the contract analysis results using the local QA model.
+    Generate a summary of contract analysis using Groq.
     
     Uses stricter confidence threshold (SUMMARY_MIN_CONFIDENCE) for better quality.
     """
@@ -536,8 +664,20 @@ def summarize_contract_analysis(analyses: List[Dict[str, Any]]) -> str:
     else:
         context = " ".join([a.get("clause_text", "") for a in analyses])       
         
-    question = "What are the critical risks and obligations in this contract?" 
-    res = _query_model_server(question, context)
+    agreement_type = str(
+        analyses[0].get("agreement_type", DEFAULT_CONTEXT_AGREEMENT_TYPE)
+    ) if analyses else DEFAULT_CONTEXT_AGREEMENT_TYPE
+    user_type = str(
+        analyses[0].get("user_type", DEFAULT_CONTEXT_USER_TYPE)
+    ) if analyses else DEFAULT_CONTEXT_USER_TYPE
+
+    question = "What are the critical risks and obligations in this contract?"
+    res = _query_model_server(
+        question,
+        context,
+        agreement_type=agreement_type,
+        user_type=user_type,
+    )
 
     if res and res.get("answer") and res.get("quality", 0.0) >= SUMMARY_MIN_CONFIDENCE:
         return f"Contract Summary (AI Generated):\n{res['answer']}\n\nNote: This is an extractive summary based on identified HIGH and MEDIUM risk clauses."

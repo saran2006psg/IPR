@@ -6,14 +6,19 @@ to the local HuggingFace RAG reasoner in llm_reasoner.py.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from .llm_reasoner import analyze_clause_with_llm, analyze_clauses_with_llm_batch
 
 logger = logging.getLogger(__name__)
 
 
-def analyze_risk(contract_clause: str, query_results: Any) -> Dict[str, Any]:
+def analyze_risk(
+    contract_clause: str,
+    query_results: Any,
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Analyze a contract clause by delegating to the local RAG reasoner.
     
@@ -50,12 +55,19 @@ def analyze_risk(contract_clause: str, query_results: Any) -> Dict[str, Any]:
         'MEDIUM'
     """
     logger.debug("Analyzing clause with local reasoner (%d chars)", len(contract_clause))
-    return analyze_clause_with_llm(clause_text=contract_clause, retrieved_clauses=query_results)
+    return analyze_clause_with_llm(
+        clause_text=contract_clause,
+        retrieved_clauses=query_results,
+        agreement_type=agreement_type,
+        user_type=user_type,
+    )
 
 
 def analyze_risk_batch(
     contract_clauses: List[str],
-    query_results_list: List[Any]
+    query_results_list: List[Any],
+    agreement_type: Optional[str] = None,
+    user_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Analyze risk for multiple contract clauses.
@@ -88,12 +100,22 @@ def analyze_risk_batch(
 
     analyses = []
     try:
-        analyses = analyze_clauses_with_llm_batch(contract_clauses, query_results_list)
+        analyses = analyze_clauses_with_llm_batch(
+            contract_clauses,
+            query_results_list,
+            agreement_type=agreement_type,
+            user_type=user_type,
+        )
     except Exception as e:
         logger.error("Batch reasoner failed, falling back to per-clause analysis: %s", e)
         for i, (clause, results) in enumerate(zip(contract_clauses, query_results_list), start=1):
             try:
-                analysis = analyze_risk(clause, results)
+                analysis = analyze_risk(
+                    clause,
+                    results,
+                    agreement_type=agreement_type,
+                    user_type=user_type,
+                )
                 analyses.append(analysis)
                 logger.debug("Analyzed clause %d/%d: %s", i, len(contract_clauses), analysis["risk_level"])
             except Exception as clause_error:

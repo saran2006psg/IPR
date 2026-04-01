@@ -3,14 +3,22 @@ import ChatPanel from './ChatPanel';
 
 function getRiskToken(level) {
   switch (level) {
-    case 'HIGH':   return { bg: 'var(--risk-high-bg)', color: 'var(--risk-high)', border: 'var(--risk-high-border)', label: 'High' };
-    case 'MEDIUM': return { bg: 'var(--risk-med-bg)', color: 'var(--risk-med)', border: 'var(--risk-med-border)', label: 'Medium' };
-    case 'LOW':    return { bg: 'var(--risk-low-bg)', color: 'var(--risk-low)', border: 'var(--risk-low-border)', label: 'Low' };
+    case 'HIGH':   return { bg: 'var(--risk-high-bg)', color: 'var(--risk-high)', border: 'var(--risk-high-border)', label: 'Careful' };
+    case 'MEDIUM': return { bg: 'var(--risk-med-bg)', color: 'var(--risk-med)', border: 'var(--risk-med-border)', label: 'Review' };
+    case 'LOW':    return { bg: 'var(--risk-low-bg)', color: 'var(--risk-low)', border: 'var(--risk-low-border)', label: 'Standard' };
     default:       return { bg: '#f3f4f6', color: '#4b5563', border: '#d1d5db', label: 'Unknown' };
   }
 }
 
-export default function AnalysisView({ results = [], chatSessionId, chatMessages, onChatSend, chatLoading }) {
+export default function AnalysisView({
+  results = [],
+  chatSessionId,
+  chatMessages,
+  onChatSend,
+  chatLoading,
+  agreementType,
+  userType,
+}) {
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   if (!results || results.length === 0) return null;
@@ -27,7 +35,15 @@ export default function AnalysisView({ results = [], chatSessionId, chatMessages
          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-title)' }}>Contract Analysis</h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>{results.length} clauses parsed &middot; {highCount} critical issues found</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>{results.length} clauses parsed &middot; {highCount} careful-review clauses found</p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, background: '#f3f4f6', color: '#111827', borderRadius: 999, padding: '4px 10px' }}>
+                  {agreementType || 'Agreement not set'}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, background: '#eef2ff', color: '#312e81', borderRadius: 999, padding: '4px 10px' }}>
+                  Perspective: {userType || 'Role not set'}
+                </span>
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
               <button className="btn-outline">Export PDF</button>
@@ -122,7 +138,7 @@ export default function AnalysisView({ results = [], chatSessionId, chatMessages
                  sessionId={chatSessionId}
                  messages={chatMessages}
                  loading={chatLoading}
-                 onSend={onChatSend}
+                 onSend={(question) => onChatSend(question, selectedIdx)}
                />
              </div>
           </div>

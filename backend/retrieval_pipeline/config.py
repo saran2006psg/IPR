@@ -10,6 +10,8 @@ import os
 
 from dotenv import load_dotenv
 
+from .agreement_profiles import AGREEMENT_USER_TYPE_MAP, DEFAULT_AGREEMENT_TYPE
+
 
 # Load .env once so all processes share the same runtime settings.
 load_dotenv()
@@ -69,6 +71,31 @@ MIN_CLAUSE_LENGTH = 20
 
 
 # ============================================================================
+# OCR Configuration
+# ============================================================================
+
+OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in ["1", "true", "yes"]
+"""Whether OCR fallback is enabled for scanned/image-only PDF pages."""
+
+OCR_ENGINE = os.getenv("OCR_ENGINE", "easyocr").strip().lower()
+"""OCR engine to use for rasterized pages. Supported: easyocr."""
+
+OCR_LANGUAGES = [
+    lang.strip() for lang in os.getenv("OCR_LANGUAGES", "en").split(",") if lang.strip()
+]
+"""Language list passed to OCR engine."""
+
+OCR_RENDER_SCALE = float(os.getenv("OCR_RENDER_SCALE", "2.0"))
+"""PDF page rasterization scale before OCR. Higher values improve quality at cost of speed."""
+
+OCR_MIN_CHARS_PER_PAGE = int(os.getenv("OCR_MIN_CHARS_PER_PAGE", "30"))
+"""Trigger OCR when native text extraction yields fewer characters than this threshold."""
+
+OCR_FORCE_ALL_PAGES = os.getenv("OCR_FORCE_ALL_PAGES", "false").lower() in ["1", "true", "yes"]
+"""Force OCR for every page even when text extraction produced content."""
+
+
+# ============================================================================
 # Risk Analysis Configuration
 # ============================================================================
 
@@ -114,32 +141,58 @@ HF_BATCH_SIZE = 8
 
 
 # ============================================================================
-# External Model Service Configuration
+# Groq LLM Configuration
 # ============================================================================
 
-MODEL_SERVER_ENABLED = os.getenv("MODEL_SERVER_ENABLED", "true").lower() in ["1", "true", "yes"]
-"""Whether to call an external QA model service for inference."""
+GROQ_ENABLED = os.getenv("GROQ_ENABLED", "true").lower() in ["1", "true", "yes"]
+"""Whether Groq-backed inference is enabled."""
 
-MODEL_SERVER_URL = os.getenv("MODEL_SERVER_URL", "http://localhost:9000/qa")
-"""External model service endpoint for QA inference."""
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+"""Groq API key used for chat completions."""
 
-MODEL_SERVER_TIMEOUT_SEC = float(os.getenv("MODEL_SERVER_TIMEOUT_SEC", "8"))
-"""Timeout in seconds for model service requests."""
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+"""Groq model used for clause risk reasoning and chat responses."""
 
-MODEL_SERVER_MAX_RETRIES = int(os.getenv("MODEL_SERVER_MAX_RETRIES", "2"))
-"""Maximum retries for model service requests on transient failures."""
+GROQ_API_URL = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions")
+"""Groq OpenAI-compatible chat completion endpoint."""
 
-MODEL_SERVER_RETRY_BACKOFF_SEC = float(os.getenv("MODEL_SERVER_RETRY_BACKOFF_SEC", "0.4"))
-"""Base backoff in seconds between model service retries."""
+GROQ_TIMEOUT_SEC = float(os.getenv("GROQ_TIMEOUT_SEC", "15"))
+"""Timeout in seconds for Groq API requests."""
 
-MODEL_SERVER_DOWN_COOLDOWN_SEC = float(os.getenv("MODEL_SERVER_DOWN_COOLDOWN_SEC", "20"))
-"""Cooldown window after model-server failure before retrying network calls."""
+GROQ_MAX_RETRIES = int(os.getenv("GROQ_MAX_RETRIES", "2"))
+"""Maximum retries for Groq requests on transient failures."""
 
-QA_BATCH_MODE_ENABLED = os.getenv("QA_BATCH_MODE_ENABLED", "true").lower() in ["1", "true", "yes"]
-"""Whether to use batched QA calls against the model server."""
+GROQ_RETRY_BACKOFF_SEC = float(os.getenv("GROQ_RETRY_BACKOFF_SEC", "0.6"))
+"""Base backoff in seconds between Groq retries."""
 
-MODEL_SERVER_BATCH_SIZE = int(os.getenv("MODEL_SERVER_BATCH_SIZE", "24"))
-"""Number of QA pairs to send in each model-server batch request."""
+GROQ_DOWN_COOLDOWN_SEC = float(os.getenv("GROQ_DOWN_COOLDOWN_SEC", "15"))
+"""Cooldown window after Groq call failure before retrying."""
+
+# Backward-compatible aliases for scripts that still reference MODEL_SERVER_*
+MODEL_SERVER_ENABLED = GROQ_ENABLED
+MODEL_SERVER_URL = GROQ_API_URL
+MODEL_SERVER_TIMEOUT_SEC = GROQ_TIMEOUT_SEC
+MODEL_SERVER_MAX_RETRIES = GROQ_MAX_RETRIES
+MODEL_SERVER_RETRY_BACKOFF_SEC = GROQ_RETRY_BACKOFF_SEC
+MODEL_SERVER_DOWN_COOLDOWN_SEC = GROQ_DOWN_COOLDOWN_SEC
+
+# Batch endpoint no longer applies for Groq chat completions.
+QA_BATCH_MODE_ENABLED = False
+MODEL_SERVER_BATCH_SIZE = 1
+
+
+# ============================================================================
+# Agreement Context Configuration
+# ============================================================================
+
+DEFAULT_CONTEXT_AGREEMENT_TYPE = os.getenv("DEFAULT_AGREEMENT_TYPE", DEFAULT_AGREEMENT_TYPE)
+"""Default agreement type used when caller omits context."""
+
+DEFAULT_CONTEXT_USER_TYPE = os.getenv(
+    "DEFAULT_USER_TYPE",
+    AGREEMENT_USER_TYPE_MAP.get(DEFAULT_CONTEXT_AGREEMENT_TYPE, ["Buyer"])[0],
+)
+"""Default user type used when caller omits context."""
 
 
 # ============================================================================

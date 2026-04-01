@@ -1,8 +1,21 @@
 import React, { useCallback, useState, useEffect } from 'react';
 
-export default function UploadView({ onFileSelect, selectedFile, onAnalyze, loading }) {
+export default function UploadView({
+  onFileSelect,
+  selectedFile,
+  onAnalyze,
+  loading,
+  agreementOptions = [],
+  agreementType,
+  userType,
+  onAgreementTypeChange,
+  onUserTypeChange,
+}) {
   const [dragging, setDragging] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
+
+  const selectedAgreement = agreementOptions.find((item) => item.agreement_type === agreementType);
+  const userTypeOptions = selectedAgreement?.user_types || [];
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -33,7 +46,7 @@ export default function UploadView({ onFileSelect, selectedFile, onAnalyze, load
 
   const steps = [
     "Uploading document securely...",
-    "Extracting text via OCR...",
+    "Extracting text (OCR fallback for scanned pages)...",
     "Segmenting legal clauses...",
     "Querying vector database for precedents...",
     "Running structural risk analysis..."
@@ -43,6 +56,47 @@ export default function UploadView({ onFileSelect, selectedFile, onAnalyze, load
     <div style={{ padding: '40px 48px', maxWidth: 800, margin: '0 auto', width: '100%' }}>
       <h1 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text-title)', marginBottom: 8 }}>Upload Contract</h1>
       <p style={{ color: 'var(--text-muted)', marginBottom: 32 }}>Securely scan documents for liabilities, unbalanced terms, and compliance risks.</p>
+
+      {!loading && (
+        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-title)', marginBottom: 12 }}>Review Context</h3>
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Agreement Type
+              </span>
+              <select
+                value={agreementType || ''}
+                onChange={(e) => onAgreementTypeChange?.(e.target.value)}
+                style={{ padding: '10px 12px', borderRadius: 6, border: '1px solid var(--border-strong)', fontSize: 14, background: '#fff' }}
+              >
+                {agreementOptions.map((option) => (
+                  <option key={option.agreement_type} value={option.agreement_type}>
+                    {option.agreement_type}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                User Type
+              </span>
+              <select
+                value={userType || ''}
+                onChange={(e) => onUserTypeChange?.(e.target.value)}
+                style={{ padding: '10px 12px', borderRadius: 6, border: '1px solid var(--border-strong)', fontSize: 14, background: '#fff' }}
+              >
+                {userTypeOptions.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      )}
       
       {!loading ? (
         <div className="card" style={{ padding: 40, textAlign: 'center' }}>
@@ -65,7 +119,7 @@ export default function UploadView({ onFileSelect, selectedFile, onAnalyze, load
             {!selectedFile ? (
               <>
                 <p style={{ fontWeight: 600, color: 'var(--text-title)', fontSize: 16 }}>Click to upload or drag and drop</p>
-                <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 4 }}>PDF, DOCX up to 10MB</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 4 }}>PDF up to 10MB</p>
               </>
             ) : (
               <>
@@ -76,7 +130,7 @@ export default function UploadView({ onFileSelect, selectedFile, onAnalyze, load
           </label>
 
           <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="btn-primary" disabled={!selectedFile} onClick={onAnalyze}>
+            <button className="btn-primary" disabled={!selectedFile || !agreementType || !userType} onClick={onAnalyze}>
               Scan Document
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </button>

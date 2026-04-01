@@ -50,16 +50,29 @@ def check_env_file():
         with open(".env", "w") as f:
             f.write("# Pinecone API Key\n")
             f.write("PINECONE_API_KEY=your-api-key-here\n")
+            f.write("\n# Groq API Key\n")
+            f.write("GROQ_API_KEY=your-groq-api-key-here\n")
+            f.write("GROQ_MODEL=llama-3.3-70b-versatile\n")
+            f.write("\n# OCR settings for scanned/image-only PDFs\n")
+            f.write("OCR_ENABLED=true\n")
+            f.write("OCR_ENGINE=easyocr\n")
+            f.write("OCR_LANGUAGES=en\n")
         print("✅ Created .env template")
-        print("\n⚠️  IMPORTANT: Edit .env and add your Pinecone API key!")
+        print("\n⚠️  IMPORTANT: Edit .env and add your Pinecone + Groq API keys!")
         return False
     
-    # Check if API key is set
+    # Check if API keys are set
     with open(".env", "r") as f:
         content = f.read()
-        if "your-api-key-here" in content or "PINECONE_API_KEY=" not in content:
-            print("\n⚠️  Pinecone API key not configured in .env!")
-            print("   Please update .env with your actual API key")
+        pinecone_missing = "your-api-key-here" in content or "PINECONE_API_KEY=" not in content
+        groq_missing = "your-groq-api-key-here" in content or "GROQ_API_KEY=" not in content
+
+        if pinecone_missing or groq_missing:
+            if pinecone_missing:
+                print("\n⚠️  Pinecone API key not configured in .env!")
+            if groq_missing:
+                print("\n⚠️  Groq API key not configured in .env!")
+            print("   Please update .env with your actual API keys")
             return False
     
     print("✅ .env file configured")
@@ -102,7 +115,7 @@ def main():
     print_header("✅ SETUP COMPLETE")
     
     if not env_ok:
-        print("\n⚠️  NEXT STEP: Configure your .env file with Pinecone API key")
+        print("\n⚠️  NEXT STEP: Configure your .env file with Pinecone and Groq API keys")
         print("   Then run: python test_system.py")
     else:
         print("\n🚀 Your system is ready!")

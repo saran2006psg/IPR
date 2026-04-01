@@ -1,6 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import UploadView from './components/UploadView';
 import AnalysisView from './components/AnalysisView';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+const FALLBACK_AGREEMENT_OPTIONS = [
+  { agreement_type: 'Company Sales Agreement', user_types: ['Buyer', 'Seller'] },
+  { agreement_type: 'Merger Agreement', user_types: ['Acquirer', 'Target Company', 'Shareholder'] },
+  { agreement_type: 'Stakeholder Agreement', user_types: ['Majority Shareholder', 'Minority Shareholder', 'Company Board'] },
+  { agreement_type: 'Rent Agreement', user_types: ['Landlord', 'Tenant'] },
+];
 
 function TopNav({ currentView, setView, hasResults }) {
   return (
@@ -98,6 +107,14 @@ function TopNav({ currentView, setView, hasResults }) {
 
 export default function App() {
   const [currentView, setCurrentView] = useState('upload');
+
+  const [agreementOptions, setAgreementOptions] = useState(FALLBACK_AGREEMENT_OPTIONS);
+  const [agreementType, setAgreementType] = useState(FALLBACK_AGREEMENT_OPTIONS[0].agreement_type);
+  const [userType, setUserType] = useState(FALLBACK_AGREEMENT_OPTIONS[0].user_types[0]);
+  const [analysisContext, setAnalysisContext] = useState({
+    agreementType: FALLBACK_AGREEMENT_OPTIONS[0].agreement_type,
+    userType: FALLBACK_AGREEMENT_OPTIONS[0].user_types[0],
+  });
   
   const [selectedFile, setSelectedFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -107,47 +124,106 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
 
+  const getUserTypesForAgreement = (agreement) => {
+    const found = agreementOptions.find((item) => item.agreement_type === agreement);
+    return found?.user_types || [];
+  };
+
+  useEffect(() => {
+    const loadAgreementOptions = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/metadata/agreement-options`);
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json();
+        if (Array.isArray(data.options) && data.options.length > 0) {
+          setAgreementOptions(data.options);
+        }
+      } catch (err) {
+        console.warn('Agreement metadata endpoint unavailable, using fallback options.', err);
+      }
+    };
+
+    loadAgreementOptions();
+  }, []);
+
+  useEffect(() => {
+    const allowed = getUserTypesForAgreement(agreementType);
+    if (allowed.length > 0 && !allowed.includes(userType)) {
+      setUserType(allowed[0]);
+    }
+  }, [agreementOptions, agreementType, userType]);
+
+  const handleAgreementTypeChange = (nextAgreementType) => {
+    setAgreementType(nextAgreementType);
+    const allowed = getUserTypesForAgreement(nextAgreementType);
+    setUserType((prevUserType) => (allowed.includes(prevUserType) ? prevUserType : (allowed[0] || '')));
+  };
+
   const handleAnalyze = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !agreementType || !userType) return;
     setLoading(true);
     
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
+      formData.append('agreement_type', agreementType);
+      formData.append('user_type', userType);
 
-      const response = await fetch('http://localhost:8000/analyze', { method: 'POST', body: formData });
-      if (!response.ok) throw new Error('Analysis failed');
+      const response = await fetch(`${API_BASE_URL}/analyze`, { method: 'POST', body: formData });
+      if (!response.ok) {
+        const errPayload = await response.json().catch(() => ({}));
+        throw new Error(errPayload.detail || 'Analysis failed');
+      }
 
       const data = await response.json();
       setResults(data.results);
       setChatSessionId(data.session_id || null);
       setChatMessages([]);
+      setAnalysisContext({
+        agreementType: data.agreement_type || agreementType,
+        userType: data.user_type || userType,
+      });
       setCurrentView('analysis');
     } catch (err) {
       console.error(err);
-      alert('Analysis failed. Check console.');
+      alert(err.message || 'Analysis failed. Check console.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleChatSend = async (question) => {
+  const handleChatSend = async (question, selectedClauseIndex = null) => {
     if (!chatSessionId) return;
+    const activeAgreementType = analysisContext.agreementType || agreementType;
+    const activeUserType = analysisContext.userType || userType;
     
     const newMsg = { role: 'user', content: question };
     setChatMessages(p => [...p, newMsg]);
     setChatLoading(true);
 
     try {
-      const resp = await fetch('http://localhost:8000/chat/ask', {
+      const resp = await fetch(`${API_BASE_URL}/chat/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: chatSessionId, question }),
+        body: JSON.stringify({
+          session_id: chatSessionId,
+          question,
+          selected_clause_index: selectedClauseIndex,
+          agreement_type: activeAgreementType,
+          user_type: activeUserType,
+        }),
       });
+      if (!resp.ok) {
+        const errPayload = await resp.json().catch(() => ({}));
+        throw new Error(errPayload.detail || 'Chat request failed');
+      }
       const data = await resp.json();
       setChatMessages(data.history || []);
     } catch (err) {
       console.error(err);
+      alert(err.message || 'Chat request failed.');
     } finally {
       setChatLoading(false);
     }
@@ -159,10 +235,15 @@ export default function App() {
       
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         {currentView === 'upload' && <UploadView 
-          onFileSelect={setSelectedFile} 
+          onFileSelect={setSelectedFile}
           selectedFile={selectedFile} 
           onAnalyze={handleAnalyze} 
-          loading={loading} 
+          loading={loading}
+          agreementOptions={agreementOptions}
+          agreementType={agreementType}
+          userType={userType}
+          onAgreementTypeChange={handleAgreementTypeChange}
+          onUserTypeChange={setUserType}
         />}
         {currentView === 'analysis' && <AnalysisView 
           results={results} 
@@ -170,6 +251,8 @@ export default function App() {
           chatMessages={chatMessages}
           onChatSend={handleChatSend}
           chatLoading={chatLoading}
+          agreementType={analysisContext.agreementType}
+          userType={analysisContext.userType}
         />}
         {currentView === 'history' && (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>History view coming soon.</div>

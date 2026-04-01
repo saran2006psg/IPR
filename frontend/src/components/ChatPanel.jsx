@@ -1,5 +1,18 @@
 import React, { useRef, useEffect, useState } from 'react';
 
+function softenRiskLabels(text = '') {
+  return text
+    .replace(/\bHIGH\b/g, 'CAREFUL')
+    .replace(/\bMEDIUM\b/g, 'REVIEW')
+    .replace(/\bLOW\b/g, 'STANDARD')
+    .replace(/\bHigh\b/g, 'Careful')
+    .replace(/\bMedium\b/g, 'Review')
+    .replace(/\bLow\b/g, 'Standard')
+    .replace(/\bhigh\b/g, 'careful')
+    .replace(/\bmedium\b/g, 'review')
+    .replace(/\blow\b/g, 'standard');
+}
+
 export default function ChatPanel({ sessionId, messages, loading, onSend }) {
   const [draft, setDraft] = useState('');
   const listRef = useRef(null);
@@ -31,6 +44,7 @@ export default function ChatPanel({ sessionId, messages, loading, onSend }) {
         ) : (
           messages.map((m, idx) => {
             const isUser = m.role === 'user';
+            const content = isUser ? m.content : softenRiskLabels(m.content);
             return (
               <div key={idx} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
                 <div style={{
@@ -39,7 +53,7 @@ export default function ChatPanel({ sessionId, messages, loading, onSend }) {
                   color: isUser ? '#ffffff' : 'var(--text-body)',
                   border: isUser ? 'none' : '1px solid var(--border-light)'
                 }}>
-                  {m.content}
+                  {content}
                 </div>
               </div>
             );

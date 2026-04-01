@@ -16,8 +16,8 @@ The Legal Contract Risk Analyzer is a complete end-to-end system for analyzing l
 
 - **Vector Database**: Pinecone for semantic clause similarity search
 - **Embeddings**: SentenceTransformers (all-mpnet-base-v2) for 768-dimensional embeddings
-- **PDF Processing**: PyMuPDF for text extraction
-- **Risk Analysis**: ML-based risk classification from a knowledge base of 9,447 legal clauses
+- **PDF Processing**: PyMuPDF text extraction with EasyOCR fallback for scanned/image-only pages
+- **Risk Analysis**: Groq-powered role-aware reasoning with Pinecone retrieval over 9,447 legal clauses
 
 ---
 
@@ -45,10 +45,15 @@ This will:
 
 ### 3. Configure Environment
 
-Edit `.env` and add your Pinecone API key:
+Edit `.env` and add your Pinecone + Groq API keys:
 
 ```
 PINECONE_API_KEY=pcsk_xxxxxxxxxxxxxxxxxxxxx
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxx
+GROQ_MODEL=llama-3.3-70b-versatile
+OCR_ENABLED=true
+OCR_ENGINE=easyocr
+OCR_LANGUAGES=en
 ```
 
 ### 4. Run Ingestion Pipeline (First Time Only)
@@ -77,36 +82,25 @@ python backend/api.py
 
 The API will be available at http://localhost:8000 with documentation at http://localhost:8000/docs
 
-### 6.1 Run with Dedicated Model Server (Recommended)
+### 6.1 Configure Groq Inference
 
-For faster repeated analysis, run the QA model in a separate terminal so it stays loaded.
-
-Terminal A (model service):
+The backend now calls Groq directly for clause reasoning and chat responses. Ensure `.env` contains:
 
 ```bash
-python backend/model_server.py
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxx
+GROQ_MODEL=llama-3.3-70b-versatile
 ```
 
-Terminal B (main API):
-
-```bash
-$env:MODEL_SERVER_ENABLED="true"
-$env:MODEL_SERVER_URL="http://localhost:9000/qa"
-$env:QA_BATCH_MODE_ENABLED="true"
-$env:MODEL_SERVER_BATCH_SIZE="24"
-python backend/api.py
-```
-
-In this mode, the main API calls the model service over HTTP and falls back to Pinecone-only similarity reasoning if the model service is temporarily unavailable.
-
-Health endpoint now includes model-server status:
+Health endpoint includes LLM provider/model status:
 
 ```json
 {
   "status": "ok",
   "api": "ready",
   "model_server": "ready",
-  "model_server_url": "http://localhost:9000/health",
+  "llm_provider": "groq",
+  "llm_model": "llama-3.3-70b-versatile",
+  "model_server_url": "https://api.groq.com/openai/v1/chat/completions",
   "timestamp": "2026-03-31T10:15:30.123456+00:00"
 }
 ```

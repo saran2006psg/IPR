@@ -24,6 +24,7 @@ pinecone>=5.0.0
 
 # PDF Processing (Retrieval Pipeline)
 PyMuPDF>=1.23.0
+easyocr>=1.7.1
 
 # PDF Generation (Testing & Samples)
 reportlab>=3.6.0

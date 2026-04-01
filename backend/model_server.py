@@ -48,6 +48,52 @@ class QABatchResponse(BaseModel):
     responses: list[QAResponse]
 
 
+_NBEST_SPAN_CANDIDATES = 20
+_MAX_ANSWER_TOKENS = 32
+
+
+def _select_best_span(
+    input_ids: torch.Tensor,
+    start_logits: torch.Tensor,
+    end_logits: torch.Tensor,
+    context_token_indices: list[int],
+) -> tuple[str, float]:
+    """Pick the best non-empty answer span from context-token candidates."""
+    if tokenizer is None or not context_token_indices:
+        return "", -999.0
+
+    k = min(_NBEST_SPAN_CANDIDATES, len(context_token_indices))
+
+    start_scores = start_logits[context_token_indices]
+    end_scores = end_logits[context_token_indices]
+
+    top_start_rel = torch.topk(start_scores, k=k).indices.tolist()
+    top_end_rel = torch.topk(end_scores, k=k).indices.tolist()
+
+    top_start = [context_token_indices[i] for i in top_start_rel]
+    top_end = [context_token_indices[i] for i in top_end_rel]
+
+    candidates: list[tuple[float, int, int]] = []
+    for s in top_start:
+        for e in top_end:
+            if e < s:
+                continue
+            if (e - s + 1) > _MAX_ANSWER_TOKENS:
+                continue
+            score = float(start_logits[s] + end_logits[e])
+            candidates.append((score, s, e))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    for score, s, e in candidates:
+        token_slice = input_ids[s : e + 1].detach().cpu().tolist()
+        answer = tokenizer.decode(token_slice, skip_special_tokens=True).strip()
+        if answer:
+            return answer, score
+
+    return "", -999.0
+
+
 def _run_qa_batch(items: list[QARequest]) -> list[QAResponse]:
     """Run QA inference for a batch of question/context pairs."""
     if tokenizer is None or model is None or device is None:
@@ -56,29 +102,36 @@ def _run_qa_batch(items: list[QARequest]) -> list[QAResponse]:
     questions = [item.question for item in items]
     contexts = [item.context for item in items]
 
-    inputs = tokenizer(
+    encoded = tokenizer(
         questions,
         contexts,
         return_tensors="pt",
         max_length=HF_MAX_LENGTH,
         truncation="only_second",
-        padding="max_length",
+        padding=True,
+        return_offsets_mapping=True,
     )
-    inputs = {k: v.to(device) for k, v in inputs.items()}
+    encoded.pop("offset_mapping", None)
+    inputs = {k: v.to(device) for k, v in encoded.items()}
 
     with torch.no_grad():
         outputs = model(**inputs)
 
     responses: list[QAResponse] = []
     for i in range(len(items)):
-        start = torch.argmax(outputs.start_logits[i]).item()
-        end = torch.argmax(outputs.end_logits[i]).item() + 1
-        if end <= start:
-            end = start + 1
+        sequence_ids = encoded.sequence_ids(i)
+        context_token_indices = [
+            idx for idx, seq_id in enumerate(sequence_ids)
+            if seq_id == 1
+        ]
 
-        answer = tokenizer.decode(inputs["input_ids"][i][start:end], skip_special_tokens=True)
-        confidence = (outputs.start_logits[i, start] + outputs.end_logits[i, end - 1]).item()
-        responses.append(QAResponse(answer=answer.strip(), confidence=round(confidence, 2)))
+        answer, confidence = _select_best_span(
+            input_ids=inputs["input_ids"][i],
+            start_logits=outputs.start_logits[i],
+            end_logits=outputs.end_logits[i],
+            context_token_indices=context_token_indices,
+        )
+        responses.append(QAResponse(answer=answer, confidence=round(confidence, 2)))
 
     return responses
 
@@ -89,7 +142,7 @@ def load_model() -> None:
     global tokenizer, model, device
 
     logger.info("Loading model server resources from %s", HF_MODEL_PATH)
-    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_PATH, local_files_only=True, use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_PATH, local_files_only=True, use_fast=True)
     model = AutoModelForQuestionAnswering.from_pretrained(HF_MODEL_PATH, local_files_only=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -101,7 +154,14 @@ def load_model() -> None:
 def health() -> dict:
     """Service readiness probe."""
     ready = tokenizer is not None and model is not None and device is not None
-    return {"status": "ok" if ready else "loading"}
+    return {
+        "status": "ok" if ready else "loading",
+        "ready": ready,
+        "device": str(device) if device is not None else None,
+        "model_path": HF_MODEL_PATH,
+        "tokenizer_loaded": tokenizer is not None,
+        "model_loaded": model is not None,
+    }
 
 
 @app.post("/qa", response_model=QAResponse)
