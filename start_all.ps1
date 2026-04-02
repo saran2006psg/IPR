@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = $PSScriptRoot
-$venvActivate = Join-Path $repoRoot ".venv\Scripts\Activate.ps1"
+$venvActivate = Join-Path $repoRoot "venv\Scripts\Activate.ps1"
 $backendDir = Join-Path $repoRoot "backend"
 $frontendDir = Join-Path $repoRoot "frontend"
 
@@ -71,4 +71,3 @@ Start-Process powershell -ArgumentList @(
 Write-Host "All services launched in separate terminals."
 Write-Host "Frontend: http://localhost:5173"
 Write-Host "Backend API: http://localhost:8000"
-Write-Host "Groq-backed inference is enabled via GROQ_API_KEY in your .env"
