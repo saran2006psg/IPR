@@ -8,7 +8,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from retrieval_pipeline.config import CHAT_DB_PATH, CHAT_SESSION_TTL_SEC
+from retrieval_pipeline.config import CHAT_DB_PATH, CHAT_MAX_SESSIONS, CHAT_SESSION_TTL_SEC
 
 _db_lock = threading.Lock()
 
@@ -103,11 +103,59 @@ def create_session(file_name: str, analyses: List[Dict[str, Any]], summary: str)
                 """,
                 (session_id, file_name, json.dumps(analyses), summary, now, now),
             )
+            _prune_sessions_locked(conn, CHAT_MAX_SESSIONS)
             conn.commit()
         finally:
             conn.close()
 
     return session_id
+
+
+def prune_sessions(max_sessions: Optional[int] = None) -> int:
+    """Delete oldest sessions beyond max_sessions and return deleted session count."""
+    keep = CHAT_MAX_SESSIONS if max_sessions is None else int(max_sessions)
+    keep = max(0, keep)
+
+    with _db_lock:
+        conn = _connect()
+        try:
+            deleted = _prune_sessions_locked(conn, keep)
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
+
+
+def _prune_sessions_locked(conn: sqlite3.Connection, keep: int) -> int:
+    """Internal prune helper that requires caller to hold lock/connection."""
+    if keep <= 0:
+        rows = conn.execute("SELECT session_id FROM chat_sessions").fetchall()
+        delete_ids = [r["session_id"] for r in rows]
+    else:
+        rows = conn.execute(
+            """
+            SELECT session_id
+            FROM chat_sessions
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT -1 OFFSET ?
+            """,
+            (keep,),
+        ).fetchall()
+        delete_ids = [r["session_id"] for r in rows]
+
+    if not delete_ids:
+        return 0
+
+    conn.executemany(
+        "DELETE FROM chat_messages WHERE session_id = ?",
+        [(sid,) for sid in delete_ids],
+    )
+    conn.executemany(
+        "DELETE FROM chat_sessions WHERE session_id = ?",
+        [(sid,) for sid in delete_ids],
+    )
+
+    return len(delete_ids)
 
 
 def get_session(session_id: str) -> Optional[Dict[str, Any]]:
@@ -132,6 +180,54 @@ def get_session(session_id: str) -> Optional[Dict[str, Any]]:
             }
         finally:
             conn.close()
+
+
+def list_sessions(limit: int = 25) -> List[Dict[str, Any]]:
+    """Return recent chat sessions with lightweight metadata for history views."""
+    safe_limit = max(1, min(100, int(limit)))
+
+    with _db_lock:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT session_id, file_name, analyses_json, summary_text, created_at, updated_at
+                FROM chat_sessions
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+    sessions: List[Dict[str, Any]] = []
+    for row in rows:
+        analyses = json.loads(row["analyses_json"] or "[]")
+        clause_count = len(analyses)
+        high_risk_count = len([a for a in analyses if a.get("risk_level") == "HIGH"])
+
+        agreement_type = None
+        user_type = None
+        if analyses:
+            agreement_type = analyses[0].get("agreement_type")
+            user_type = analyses[0].get("user_type")
+
+        sessions.append(
+            {
+                "session_id": row["session_id"],
+                "file_name": row["file_name"] or "uploaded_contract.pdf",
+                "summary": row["summary_text"] or "",
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "clause_count": clause_count,
+                "high_risk_count": high_risk_count,
+                "agreement_type": agreement_type,
+                "user_type": user_type,
+            }
+        )
+
+    return sessions
 
 
 def touch_session(session_id: str) -> None:

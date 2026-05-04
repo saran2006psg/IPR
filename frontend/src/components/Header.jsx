@@ -50,7 +50,7 @@ function Header() {
         backgroundClip: 'text',
         marginBottom: 10,
       }}>
-        LexGuard
+        Contract Risk Analyzer
         <span style={{
           marginLeft: 10,
           fontSize: 'clamp(14px, 2vw, 18px)',

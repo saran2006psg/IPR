@@ -1,4 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { cleanDisplayText } from '../utils/textSanitizer';
+
+const QUICK_PROMPTS = [
+  'Explain this clause in simple terms',
+  'What is my biggest legal risk here?',
+  'Suggest safer wording for this clause',
+];
 
 function softenRiskLabels(text = '') {
   return text
@@ -29,22 +36,45 @@ export default function ChatPanel({ sessionId, messages, loading, onSend }) {
     setDraft('');
   };
 
+  const handleQuickPrompt = (prompt) => {
+    if (loading) return;
+    onSend(prompt);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div ref={listRef} style={{ flex: 1, overflowY: 'auto', paddingBottom: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {sessionId ? (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            Session active
+          </div>
+        ) : null}
+
         {messages.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontSize: 14 }}>
             <div style={{ width: 40, height: 40, background: 'var(--bg-main)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z"/></svg>
             </div>
-            Ask questions about this specific clause or the entire contract. <br/>
-            Try: <br/><br/>
-            <button className="btn-outline" onClick={() => onSend('Explain this clause in simple terms')}>"Explain this clause in simple terms"</button>
+            Ask questions about the selected clause or whole contract.
+            <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {QUICK_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  className="btn-outline"
+                  onClick={() => handleQuickPrompt(prompt)}
+                  style={{ fontSize: 12, padding: '6px 10px' }}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           messages.map((m, idx) => {
             const isUser = m.role === 'user';
-            const content = isUser ? m.content : softenRiskLabels(m.content);
+            const content = isUser
+              ? cleanDisplayText(m.content)
+              : cleanDisplayText(softenRiskLabels(m.content));
             return (
               <div key={idx} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
                 <div style={{
@@ -70,21 +100,26 @@ export default function ChatPanel({ sessionId, messages, loading, onSend }) {
         )}
       </div>
 
-      <div style={{ marginTop: 'auto', borderTop: '1px solid var(--border-light)', paddingTop: 16 }}>
+      <div style={{ marginTop: 'auto', borderTop: '1px solid var(--border-light)', paddingTop: 14 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="text"
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleSend(); }}
-            placeholder="Ask the AI assistant..."
+            placeholder="Ask for risk detail, rewrite suggestions, or negotiation strategy..."
             style={{ 
-              flex: 1, padding: '10px 14px', borderRadius: 6, border: '1px solid var(--border-strong)', 
-              fontSize: 14, outline: 'none' 
+              flex: 1,
+              padding: '10px 14px',
+              borderRadius: 8,
+              border: '1px solid var(--border-strong)', 
+              fontSize: 14,
+              outline: 'none',
+              background: '#ffffff',
             }}
           />
-          <button className="btn-primary" onClick={handleSend} disabled={loading || !draft.trim()} style={{ padding: '8px 12px' }}>
-             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          <button className="btn-primary" onClick={handleSend} disabled={loading || !draft.trim()} style={{ padding: '8px 12px', minWidth: 72 }}>
+            Send
           </button>
         </div>
       </div>

@@ -119,7 +119,7 @@ export default function Sidebar({ currentView, setView }) {
           <div style={{ width: 24, height: 24, background: '#111827', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
           </div>
-          LexGuard
+          Contract Risk Analyzer
         </h1>
       </div>
       

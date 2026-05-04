@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import UploadView from './components/UploadView';
 import AnalysisView from './components/AnalysisView';
+import HistoryView from './components/HistoryView';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
 const FALLBACK_AGREEMENT_OPTIONS = [
   { agreement_type: 'Company Sales Agreement', user_types: ['Buyer', 'Seller'] },
@@ -36,7 +37,7 @@ function TopNav({ currentView, setView, hasResults }) {
               <path d="M2 12L12 17L22 12" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          LexGuard
+          Contract Risk Analyzer
         </div>
 
         {/* Center Nav */}
@@ -87,20 +88,7 @@ function TopNav({ currentView, setView, hasResults }) {
         </nav>
       </div>
 
-      {/* Right / User Profile */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        <button className="btn-ghost" style={{ padding: '6px 12px', fontSize: 13, borderRadius: 6 }}>
-          Support
-        </button>
-        <div style={{ 
-          width: 32, height: 32, borderRadius: '50%', 
-          background: 'var(--border)', display: 'flex', alignItems: 'center', 
-          justifyContent: 'center', fontSize: 13, fontWeight: 600, color: '#111827',
-          cursor: 'pointer'
-        }}>
-          JD
-        </div>
-      </div>
+
     </header>
   );
 }
@@ -123,6 +111,9 @@ export default function App() {
   const [chatSessionId, setChatSessionId] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
+  const [historySessions, setHistorySessions] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
 
   const getUserTypesForAgreement = (agreement) => {
     const found = agreementOptions.find((item) => item.agreement_type === agreement);
@@ -229,6 +220,66 @@ export default function App() {
     }
   };
 
+  const loadHistorySessions = async () => {
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const resp = await fetch(`${API_BASE_URL}/chat/sessions`);
+      if (!resp.ok) {
+        const errPayload = await resp.json().catch(() => ({}));
+        throw new Error(errPayload.detail || 'Failed to load session history');
+      }
+      const data = await resp.json();
+      setHistorySessions(Array.isArray(data.sessions) ? data.sessions : []);
+    } catch (err) {
+      console.error(err);
+      setHistoryError(err.message || 'Failed to load session history.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleOpenHistorySession = async (sessionId) => {
+    if (!sessionId) {
+      return;
+    }
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const resp = await fetch(`${API_BASE_URL}/chat/sessions/${sessionId}`);
+      if (!resp.ok) {
+        const errPayload = await resp.json().catch(() => ({}));
+        throw new Error(errPayload.detail || 'Failed to open session');
+      }
+      const data = await resp.json();
+      setResults(Array.isArray(data.results) ? data.results : []);
+      setChatSessionId(data.session_id || null);
+      setChatMessages(Array.isArray(data.history) ? data.history : []);
+
+      const restoredAgreementType = data.agreement_type || agreementType;
+      const restoredUserType = data.user_type || userType;
+
+      setAgreementType(restoredAgreementType);
+      setUserType(restoredUserType);
+      setAnalysisContext({
+        agreementType: restoredAgreementType,
+        userType: restoredUserType,
+      });
+      setCurrentView('analysis');
+    } catch (err) {
+      console.error(err);
+      setHistoryError(err.message || 'Failed to open session.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentView === 'history') {
+      loadHistorySessions();
+    }
+  }, [currentView]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', background: 'var(--bg-base)' }}>
       <TopNav currentView={currentView} setView={setCurrentView} hasResults={!!results} />
@@ -255,7 +306,13 @@ export default function App() {
           userType={analysisContext.userType}
         />}
         {currentView === 'history' && (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>History view coming soon.</div>
+          <HistoryView
+            sessions={historySessions}
+            loading={historyLoading}
+            error={historyError}
+            onRefresh={loadHistorySessions}
+            onOpenSession={handleOpenHistorySession}
+          />
         )}
       </main>
     </div>

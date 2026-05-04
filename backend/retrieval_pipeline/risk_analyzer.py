@@ -1,9 +1,3 @@
-"""
-Risk analysis compatibility layer for Legal Contract Risk Analyzer.
-
-This module keeps the historical public API while delegating risk reasoning
-to the local HuggingFace RAG reasoner in llm_reasoner.py.
-"""
 
 import logging
 from typing import Dict, Any, List, Optional
@@ -69,27 +63,7 @@ def analyze_risk_batch(
     agreement_type: Optional[str] = None,
     user_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Analyze risk for multiple contract clauses.
-    
-    Args:
-        contract_clauses: List of contract clause texts
-        query_results_list: List of Pinecone query results (one per clause)
-        
-    Returns:
-        List of risk analysis results, one per clause
-        
-    Raises:
-        ValueError: If lists have different lengths
-        
-    Example:
-        >>> clauses = ["clause 1", "clause 2", "clause 3"]
-        >>> vectors = embed_clauses(clauses)
-        >>> results = query_pinecone_batch(vectors)
-        >>> analyses = analyze_risk_batch(clauses, results)
-        >>> len(analyses)
-        3
-    """
+
     if len(contract_clauses) != len(query_results_list):
         raise ValueError(
             f"Clauses and results lists must have same length: "

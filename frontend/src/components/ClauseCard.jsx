@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { cleanClauseDisplayText, cleanDisplayText } from '../utils/textSanitizer';
 
 function riskStyle(level) {
   switch (level) {
@@ -88,7 +89,7 @@ function ClauseCard({ result, index }) {
             lineHeight: 1.65,
             fontFamily: 'Inter, sans-serif',
           }}>
-            {clause}
+            {cleanClauseDisplayText(clause)}
           </p>
         </div>
 
@@ -99,7 +100,7 @@ function ClauseCard({ result, index }) {
             Risk Analysis
           </p>
           <p style={{ color: '#b1a4f0', fontSize: 13, lineHeight: 1.65 }}>
-            {explanation || 'No further details available.'}
+            {cleanDisplayText(explanation || 'No further details available.')}
           </p>
         </div>
       </div>
@@ -172,17 +173,17 @@ function ClauseCard({ result, index }) {
                           color: riskStyle(sc.severity).dot,
                           textTransform: 'uppercase',
                           letterSpacing: '0.06em',
-                        }}>{sc.severity}</span>
+                        }}>{cleanDisplayText(sc.severity)}</span>
                         <span style={{
                           fontSize: 10, color: '#5a4a9c',
                           fontFamily: "'JetBrains Mono', monospace",
                           background: 'rgba(255,255,255,0.05)',
                           padding: '1px 6px', borderRadius: 4,
-                        }}>{sc.clause_type}</span>
+                        }}>{cleanDisplayText(sc.clause_type)}</span>
                         <ScoreBar score={sc.score} />
                       </div>
                       <p style={{ fontSize: 12, color: '#7b6aae', lineHeight: 1.5 }}>
-                        {sc.text}
+                        {cleanClauseDisplayText(sc.text)}
                       </p>
                     </div>
                   </div>

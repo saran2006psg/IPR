@@ -1,19 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #f9fafb;
+  --bg-base: #f4f6f8;
+  --bg-main: #eef2f6;
   --bg-panel: #ffffff;
-  --bg-sidebar: #f3f4f6;
+  --bg-sidebar: #e8edf3;
   
-  --border-light: #e5e7eb;
-  --border-strong: #d1d5db;
+  --border-light: #dce3ea;
+  --border-strong: #bfcad6;
+  --border: #d0d9e3;
 
-  --text-title: #111827;
-  --text-body: #374151;
-  --text-muted: #6b7280;
+  --text-title: #101828;
+  --text-body: #344054;
+  --text-muted: #667085;
 
-  --accent: #0f172a;
-  --accent-hover: #1e293b;
+  --accent: #0f314d;
+  --accent-hover: #17456c;
 
   --risk-high: #dc2626;
   --risk-high-bg: #fef2f2;
@@ -31,9 +33,12 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
-  background-color: var(--bg-main);
+  background:
+    radial-gradient(1200px 500px at 0% 0%, #d8e8f6 0%, rgba(216, 232, 246, 0) 60%),
+    radial-gradient(900px 460px at 100% 0%, #e6f4ee 0%, rgba(230, 244, 238, 0) 58%),
+    var(--bg-base);
   color: var(--text-body);
-  font-family: 'Inter', -apple-system, sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Segoe UI', sans-serif;
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
@@ -45,7 +50,7 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
 .btn-primary {
-  background-color: #111827;
+  background: linear-gradient(135deg, #0f314d 0%, #17456c 100%);
   color: #ffffff;
   padding: 8px 16px;
   border-radius: 6px;
@@ -60,26 +65,26 @@ body {
   justify-content: center;
   gap: 8px;
 }
-.btn-primary:hover:not(:disabled) { background-color: #374151; }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-outline {
-  background-color: #ffffff;
-  color: #374151;
+  background-color: rgba(255, 255, 255, 0.92);
+  color: #344054;
   padding: 8px 16px;
   border-radius: 6px;
   font-size: 14px;
   font-weight: 500;
   transition: all 0.15s ease;
   cursor: pointer;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-strong);
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
 }
-.btn-outline:hover:not(:disabled) { background-color: #f9fafb; }
+.btn-outline:hover:not(:disabled) { background-color: #f8fbff; }
 
 .card {
   background-color: var(--bg-panel);

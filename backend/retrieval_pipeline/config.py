@@ -208,6 +208,9 @@ CHAT_DB_PATH = os.getenv(
 CHAT_SESSION_TTL_SEC = int(os.getenv("CHAT_SESSION_TTL_SEC", "86400"))
 """Time-to-live for chat sessions in seconds."""
 
+CHAT_MAX_SESSIONS = int(os.getenv("CHAT_MAX_SESSIONS", "3"))
+"""Maximum number of chat sessions retained in SQLite (newest by updated_at)."""
+
 CHAT_HISTORY_TURNS = int(os.getenv("CHAT_HISTORY_TURNS", "8"))
 """How many recent turns are included in chat context."""
 

@@ -24,6 +24,7 @@ from chat_session_store import (
     get_session,
     init_db,
     is_db_ready,
+    list_sessions,
     touch_session,
 )
 from retrieval_pipeline import analyze_contract
@@ -165,6 +166,37 @@ class ChatAskResponse(BaseModel):
     history: List[ChatMessage]
     agreement_type: Optional[str] = None
     user_type: Optional[str] = None
+
+
+class ChatSessionSummary(BaseModel):
+    """Lightweight session metadata for history lists."""
+    session_id: str
+    file_name: str
+    summary: str
+    clause_count: int
+    high_risk_count: int
+    agreement_type: Optional[str] = None
+    user_type: Optional[str] = None
+    created_at: float
+    updated_at: float
+
+
+class ChatSessionsResponse(BaseModel):
+    """Recent chat sessions."""
+    sessions: List[ChatSessionSummary]
+
+
+class ChatSessionDetailResponse(BaseModel):
+    """Full payload needed to restore a prior session in the UI."""
+    session_id: str
+    file_name: str
+    summary: str
+    agreement_type: Optional[str] = None
+    user_type: Optional[str] = None
+    results: List[ClauseResult]
+    history: List[ChatMessage]
+    created_at: float
+    updated_at: float
 
 
 # Health check endpoint
@@ -601,6 +633,91 @@ async def ask_chat_question(payload: ChatAskRequest):
         ],
         agreement_type=agreement_type,
         user_type=user_type,
+    )
+
+
+@app.get("/chat/sessions", response_model=ChatSessionsResponse)
+async def get_chat_sessions(limit: int = 25):
+    """List recent chat sessions to populate the frontend history tab."""
+    cleanup_expired_sessions(CHAT_SESSION_TTL_SEC)
+    sessions = list_sessions(limit=limit)
+    return ChatSessionsResponse(
+        sessions=[
+            ChatSessionSummary(
+                session_id=s["session_id"],
+                file_name=s["file_name"],
+                summary=s.get("summary", ""),
+                clause_count=int(s.get("clause_count", 0)),
+                high_risk_count=int(s.get("high_risk_count", 0)),
+                agreement_type=s.get("agreement_type"),
+                user_type=s.get("user_type"),
+                created_at=float(s.get("created_at", 0.0)),
+                updated_at=float(s.get("updated_at", 0.0)),
+            )
+            for s in sessions
+        ]
+    )
+
+
+@app.get("/chat/sessions/{session_id}", response_model=ChatSessionDetailResponse)
+async def get_chat_session_detail(session_id: str):
+    """Fetch a stored session with full analysis and chat history."""
+    cleanup_expired_sessions(CHAT_SESSION_TTL_SEC)
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found or expired.")
+
+    analyses = session.get("analyses", []) or []
+    fresh_history = get_messages(session_id, limit=30)
+
+    results = [
+        ClauseResult(
+            clause=analysis.get("clause_text", ""),
+            risk_level=analysis.get("risk_level", "UNKNOWN"),
+            explanation=analysis.get("explanation", ""),
+            similar_clauses=[
+                SimilarClause(
+                    text=sc.get("text", ""),
+                    score=float(sc.get("score", 0.0)),
+                    severity=sc.get("severity", "unknown"),
+                    clause_type=sc.get("clause_type", "unknown"),
+                    match_id=sc.get("match_id") or None,
+                    rule_id=sc.get("rule_id") or None,
+                    rule_name=sc.get("rule_name") or None,
+                )
+                for sc in analysis.get("similar_clauses", [])
+            ],
+        )
+        for analysis in analyses
+    ]
+
+    agreement_type = None
+    user_type = None
+    if analyses:
+        agreement_type = analyses[0].get("agreement_type")
+        user_type = analyses[0].get("user_type")
+
+    touch_session(session_id)
+
+    return ChatSessionDetailResponse(
+        session_id=session_id,
+        file_name=session.get("file_name") or "uploaded_contract.pdf",
+        summary=session.get("summary", ""),
+        agreement_type=agreement_type,
+        user_type=user_type,
+        results=results,
+        history=[
+            ChatMessage(
+                role=m["role"],
+                content=m["content"],
+                confidence=m.get("confidence"),
+                fallback_used=bool(m.get("fallback_used", False)),
+                citations=[Citation(**c) for c in m.get("citations", [])],
+            )
+            for m in fresh_history
+        ],
+        created_at=float(session.get("created_at", 0.0)),
+        updated_at=float(session.get("updated_at", 0.0)),
     )
 
 

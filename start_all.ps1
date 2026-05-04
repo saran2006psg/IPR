@@ -70,4 +70,4 @@ Start-Process powershell -ArgumentList @(
 
 Write-Host "All services launched in separate terminals."
 Write-Host "Frontend: http://localhost:5173"
-Write-Host "Backend API: http://localhost:8000"
+Write-Host "Backend API: http://127.0.0.1:8000"
