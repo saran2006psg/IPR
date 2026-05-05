@@ -19,7 +19,10 @@ This folder contains complete technical documentation for the Contract Risk Anal
 5. `API_REFERENCE.md`
    REST API endpoints, request/response contracts, and status behavior.
 
-6. `OPERATIONS.md`
+6. `DATABASE_SCHEMA.md`
+   Complete current and future data schema: SQLite tables, JSON payload schemas, Pinecone vectors, and normalized SQL proposal.
+
+7. `OPERATIONS.md`
    Local runbook, environment configuration, and troubleshooting.
 
 ## Reading Order
@@ -31,4 +34,5 @@ If you are new to the project, read in this order:
 3. `WORKFLOWS.md`
 4. `COMPONENTS.md`
 5. `API_REFERENCE.md`
-6. `OPERATIONS.md`
+6. `DATABASE_SCHEMA.md`
+7. `OPERATIONS.md`

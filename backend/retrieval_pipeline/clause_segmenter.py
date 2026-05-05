@@ -131,7 +131,7 @@ def segment_clauses(text: str) -> List[str]:
 def segment_clauses_advanced(text: str, custom_patterns: List[str] = None) -> List[str]:
     """
     Advanced clause segmentation with custom regex patterns.
-    
+        
     This function allows users to provide custom regex patterns for clause boundaries
     in addition to the default patterns.
     
